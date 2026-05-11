@@ -27,6 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Summarize a trace.jsonl file or run directory and exit.",
     )
     parser.add_argument(
+        "--resume",
+        metavar="CHECKPOINT",
+        help="Resume an interrupted run from checkpoint.json.",
+    )
+    parser.add_argument(
         "--eval",
         metavar="CASES_JSON",
         help="Run eval cases and print a Markdown report.",
@@ -105,6 +110,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = summarize_trace(args.replay)
         print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+
+    if args.resume:
+        runner = AgentRunner(
+            model=build_model(args),
+            cwd=cwd,
+            trace_root=Path(args.trace_root),
+            max_iterations=args.max_iterations,
+        )
+        result = runner.resume_from_checkpoint(args.resume)
+        print(result.final_answer)
+        print()
+        print(f"status: {result.status}")
+        print(f"run_id: {result.run_id}")
+        print(f"trace: {result.trace_path}")
+        return 0 if result.status == "success" else 1
 
     if args.eval:
         from harnesscoder.eval_runner import render_markdown_report, run_eval_cases

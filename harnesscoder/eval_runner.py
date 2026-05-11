@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from datetime import datetime, timezone
 import json
 import os
 import shlex
@@ -11,6 +13,7 @@ from typing import Any
 
 from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.replay import summarize_trace
 
 
 @dataclass(slots=True)
@@ -68,6 +71,10 @@ class EvalResult:
     test_stderr: str = ""
     test_timed_out: bool = False
     test_duration_seconds: float = 0.0
+    test_passed: bool = False
+    failure_category: str = "incomplete"
+    metrics: dict[str, Any] = field(default_factory=dict)
+    trace_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
@@ -119,8 +126,19 @@ def run_eval_cases(
         )
         run_result = runner.run(case.task)
         test_result = _run_test_command(case, case_cwd)
-        tool_counts = count_trace_tools(run_result.trace_path)
+        test_passed, test_reason = _score_test_result(case, test_result)
         passed, reason = _score_case(case, run_result.status, test_result)
+        _append_test_result_event(
+            trace_path=run_result.trace_path,
+            run_id=run_result.run_id,
+            case=case,
+            test_result=test_result,
+            passed=test_passed,
+            reason=test_reason,
+        )
+        trace_summary = summarize_trace(run_result.trace_path)
+        metrics = _metrics_from_summary(trace_summary)
+        tool_counts = _tool_counts_from_summary(trace_summary)
 
         results.append(
             EvalResult(
@@ -140,6 +158,10 @@ def run_eval_cases(
                 test_stderr=test_result.stderr,
                 test_timed_out=test_result.timed_out,
                 test_duration_seconds=test_result.duration_seconds,
+                test_passed=test_passed,
+                failure_category=_failure_category_from_summary(trace_summary),
+                metrics=metrics,
+                trace_summary=trace_summary,
             )
         )
 
@@ -150,6 +172,17 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     total = len(results)
     passed = sum(1 for result in results if result.passed)
     failed = total - passed
+    task_successes = sum(1 for result in results if result.runner_status == "success")
+    test_passes = sum(1 for result in results if result.test_passed)
+    avg_tool_calls = _average_metric(results, "average_tool_calls")
+    repeated_reads = _sum_metric(results, "repeated_read_count")
+    invalid_tool_calls = _sum_metric(results, "invalid_tool_call_count")
+    policy_denials = _sum_metric(results, "policy_denial_count")
+    tool_failures = _sum_metric(results, "failed_tool_count")
+    context_packs = _sum_metric(results, "context_packed_count")
+    checkpoints = _sum_metric(results, "checkpoint_created_count")
+    resume_rate = _average_nullable_metric(results, "resume_success_rate")
+    failure_breakdown = Counter(result.failure_category for result in results)
     lines = [
         "# HarnessCoder Eval Report",
         "",
@@ -157,8 +190,26 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"- Passed: {passed}",
         f"- Failed: {failed}",
         "",
-        "| Case | Result | Agent | Test | Run | Tools |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Task success rate | {_format_rate(task_successes, total)} |",
+        f"| Test pass rate | {_format_rate(test_passes, total)} |",
+        f"| Avg tool calls | {_format_number(avg_tool_calls)} |",
+        f"| Repeated reads | {repeated_reads} |",
+        f"| Invalid tool calls | {invalid_tool_calls} |",
+        f"| Policy denials | {policy_denials} |",
+        f"| Tool failures | {tool_failures} |",
+        f"| Context packs | {context_packs} |",
+        f"| Checkpoints | {checkpoints} |",
+        f"| Resume success rate | {_format_nullable_rate(resume_rate)} |",
+        f"| Failure category breakdown | {_format_breakdown(failure_breakdown)} |",
+        "",
+        "## Runs",
+        "",
+        "| Case | Result | Agent | Test | Failure | Run | Tools |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for result in results:
@@ -176,6 +227,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     status,
                     _md_cell(result.runner_status),
                     _md_cell(test_status),
+                    _md_cell(result.failure_category),
                     _md_cell(f"{result.run_id}<br>{result.trace_path}"),
                     _md_cell(_format_tool_counts(result.tool_counts)),
                 ]
@@ -196,6 +248,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 f"- CWD: `{result.cwd}`",
                 f"- Test command: `{result.test_command}`",
                 f"- Reason: {result.reason}",
+                f"- Failure category: `{result.failure_category}`",
+                f"- Replay metrics: {_inline(_format_metrics(result.metrics))}",
                 f"- Trace: `{result.trace_path}`",
                 f"- Duration: {result.test_duration_seconds:.2f}s",
             ]
@@ -233,6 +287,33 @@ def count_trace_tools(trace_path: str | Path) -> dict[str, int]:
             continue
         counts[tool_name] = counts.get(tool_name, 0) + 1
     return counts
+
+
+def _append_test_result_event(
+    *,
+    trace_path: Path,
+    run_id: str,
+    case: EvalCase,
+    test_result: "_CommandResult",
+    passed: bool,
+    reason: str,
+) -> None:
+    event = {
+        "type": "test_result",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "case_id": case.id,
+        "command": case.test_command,
+        "passed": passed,
+        "reason": reason,
+        "returncode": test_result.returncode,
+        "stdout": _clip(test_result.stdout, 4000),
+        "stderr": _clip(test_result.stderr, 4000),
+        "timed_out": test_result.timed_out,
+        "duration_seconds": test_result.duration_seconds,
+    }
+    with Path(trace_path).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 @dataclass(slots=True)
@@ -314,6 +395,20 @@ def _score_case(
     if runner_status != "success":
         reasons.append(f"agent status was {runner_status!r}")
 
+    test_passed, test_reason = _score_test_result(case, test_result)
+    if not test_passed:
+        reasons.append(test_reason)
+
+    if reasons:
+        return False, "; ".join(reasons)
+    return True, "agent completed and success criteria matched"
+
+
+def _score_test_result(
+    case: EvalCase,
+    test_result: _CommandResult,
+) -> tuple[bool, str]:
+    reasons: list[str] = []
     if test_result.timed_out:
         reasons.append(f"test command timed out after {case.timeout}s")
 
@@ -338,7 +433,7 @@ def _score_case(
 
     if reasons:
         return False, "; ".join(reasons)
-    return True, "agent completed and success criteria matched"
+    return True, "success criteria matched"
 
 
 def _build_model(provider: str) -> ModelAdapter:
@@ -426,6 +521,114 @@ def _success_contains(value: Any) -> str | tuple[str, ...] | None:
     ):
         return tuple(value)
     raise ValueError("success_contains must be a non-empty string or string list")
+
+
+def _metrics_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    metrics = summary.get("metrics")
+    return dict(metrics) if isinstance(metrics, dict) else {}
+
+
+def _tool_counts_from_summary(summary: dict[str, Any]) -> dict[str, int]:
+    counts = summary.get("tool_counts")
+    if not isinstance(counts, dict):
+        return {}
+    return {
+        str(name): count
+        for name, count in counts.items()
+        if isinstance(count, int) and not isinstance(count, bool)
+    }
+
+
+def _failure_category_from_summary(summary: dict[str, Any]) -> str:
+    category = summary.get("failure_category")
+    if isinstance(category, str) and category:
+        return category
+    metrics = summary.get("metrics")
+    if isinstance(metrics, dict):
+        category = metrics.get("failure_category")
+        if isinstance(category, str) and category:
+            return category
+    return "incomplete"
+
+
+def _average_metric(results: list[EvalResult], key: str) -> float:
+    if not results:
+        return 0.0
+    return _sum_metric(results, key) / len(results)
+
+
+def _average_nullable_metric(results: list[EvalResult], key: str) -> float | None:
+    values: list[float] = []
+    for result in results:
+        value = result.metrics.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _sum_metric(results: list[EvalResult], key: str) -> int:
+    total = 0
+    for result in results:
+        value = result.metrics.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            total += value
+        elif isinstance(value, float):
+            total += int(value)
+    return total
+
+
+def _format_rate(count: int, total: int) -> str:
+    if total <= 0:
+        return "n/a"
+    return f"{(count / total) * 100:.1f}% ({count}/{total})"
+
+
+def _format_number(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.2f}"
+
+
+def _format_nullable_rate(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value * 100:.1f}%"
+
+
+def _format_breakdown(counts: Counter[str]) -> str:
+    if not counts:
+        return "-"
+    return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+
+
+def _format_metrics(metrics: dict[str, Any]) -> str:
+    if not metrics:
+        return "-"
+    preferred = [
+        "average_tool_calls",
+        "repeated_tool_calls",
+        "repeated_read_count",
+        "invalid_tool_call_count",
+        "policy_denial_count",
+        "failed_tool_count",
+        "context_packed_count",
+        "checkpoint_created_count",
+        "resume_success_rate",
+        "test_passed",
+        "failure_category",
+    ]
+    parts = [
+        f"{key}={metrics[key]}"
+        for key in preferred
+        if key in metrics
+    ]
+    return ", ".join(parts) if parts else "-"
 
 
 def _format_tool_counts(counts: dict[str, int]) -> str:

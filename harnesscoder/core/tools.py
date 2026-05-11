@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -353,6 +354,7 @@ class ToolRegistry:
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1",
         }
+        started = time.monotonic()
         try:
             completed = subprocess.run(
                 parts,
@@ -366,6 +368,7 @@ class ToolRegistry:
         except FileNotFoundError:
             return ToolResult(call_id, tool_name, False, "", f"command not found: {parts[0]}")
         except subprocess.TimeoutExpired as exc:
+            duration_seconds = time.monotonic() - started
             output = (exc.stdout or "") + (exc.stderr or "")
             return ToolResult(
                 call_id,
@@ -373,8 +376,15 @@ class ToolRegistry:
                 False,
                 _truncate(output),
                 f"command timed out after {timeout}s",
+                metadata={
+                    "cmd": cmd,
+                    "timeout": timeout,
+                    "duration_seconds": duration_seconds,
+                    "timed_out": True,
+                },
             )
 
+        duration_seconds = time.monotonic() - started
         combined = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
         return ToolResult(
             call_id=call_id,
@@ -382,7 +392,13 @@ class ToolRegistry:
             ok=completed.returncode == 0,
             output=_truncate(combined.strip()),
             error=None if completed.returncode == 0 else f"exit code {completed.returncode}",
-            metadata={"cmd": cmd, "timeout": timeout, "returncode": completed.returncode},
+            metadata={
+                "cmd": cmd,
+                "timeout": timeout,
+                "returncode": completed.returncode,
+                "duration_seconds": duration_seconds,
+                "timed_out": False,
+            },
         )
 
     def _search_code_python(

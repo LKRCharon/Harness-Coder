@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "trace_path": "synthetic_trace.jsonl",
+  "summary": {
+    "run_id": "run_failure_demo",
+    "status": "failed",
+    "failure_category": "test_failed",
+    "failure_reason": "The edit was applied, but the focused unittest command returned 1.",
+    "modified_files": [
+      "sample.py"
+    ],
+    "evidence_events": [
+      7,
+      8
+    ]
+  },
+  "metrics": {
+    "cases_total": 1,
+    "cases_passed": 0,
+    "cases_failed": 1,
+    "pass_rate": 0.0,
+    "agent_success_rate": 0.0,
+    "test_pass_rate": 0.0,
+    "tool_failure_count": 1,
+    "policy_denial_count": 0,
+    "context_packed_count": 0,
+    "checkpoint_created_count": 0,
+    "resume_success_rate": null,
+    "mean_test_duration_seconds": 0.12,
+    "test_result_count": 1
+  }
+}

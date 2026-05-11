@@ -20,8 +20,8 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.2.0` is a runnable local runtime plus the first replay/eval layer.
-It includes:
+Version `0.3.0` is a runnable local runtime with trace replay, eval reporting,
+context governance, and checkpoint/resume support. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -32,6 +32,8 @@ It includes:
   - `run_command(cmd, timeout=30)`
 - A minimal policy gate before every tool call.
 - JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`.
+- `context_packed`, `checkpoint_created`, `run_resumed`, and `test_result`
+  events for reliability-oriented replay.
 - Trace replay summaries through `python -m harnesscoder.replay`.
 - A minimal eval harness that runs cases, executes tests, scores results, and
   renders a Markdown report.
@@ -40,6 +42,7 @@ It includes:
 ```bash
 python -m harnesscoder "看一下这个 repo 是做什么的"
 python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
+python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
 python -m harnesscoder --eval eval/cases.json
 ```
 
@@ -102,14 +105,18 @@ over `.env` values. `OPENAI_MODEL` is also accepted as a fallback for
 
 ## Trace Shape
 
-Each run writes event records with a timestamp, run id, and event type. The MVP
-trace includes at least:
+Each run writes event records with a timestamp, run id, and event type. The
+runtime trace includes at least:
 
 - `run_started`
+- `context_packed`
 - `model_action`
 - `policy_decision`
 - `tool_result`
+- `test_result`
 - `state_updated`
+- `checkpoint_created`
+- `run_resumed`
 - `run_finished`
 
 These traces are intentionally append-only JSONL so later replay and eval code
@@ -130,6 +137,12 @@ python -m harnesscoder.replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 ```
 
+Resume continues an interrupted run from the saved checkpoint:
+
+```bash
+python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
+```
+
 Eval stays workflow-shaped around the dynamic agent loop:
 
 ```text
@@ -147,7 +160,6 @@ Near-term TODOs:
 - Improve the TUI with streaming status, better history navigation, and trace
   inspection commands.
 - Live-test and harden the OpenAI-compatible model adapter against real traffic.
-- Add context packing and compaction events to the trace.
-- Add checkpoint/resume from trace plus workspace metadata.
+- Use context packs directly in the live model prompt, not only in trace.
 - Add richer failure replay fixtures under `replay/`.
 - Add bug-fix eval cases that exercise `edit_file` with real failing tests.

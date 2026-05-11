@@ -48,10 +48,23 @@ def summarize_trace(path: str | Path) -> JsonRecord:
     run_started = _last_event(records, "run_started") or {}
     run_finished = _last_event(records, "run_finished") or {}
     timing = _timing_summary(records, run_started, run_finished)
+    status = _status_from_trace(records, state)
+    policy_denials = _policy_denials(records)
+    failed_tools = _failed_tools(records)
+    test_result = _test_result(records)
+    metrics = _metrics_summary(
+        records=records,
+        tool_stats=tool_stats,
+        policy_denials=policy_denials,
+        failed_tools=failed_tools,
+        test_result=test_result,
+        status=status,
+        state=state,
+    )
 
     return {
         "run_id": _first_run_id(records, state),
-        "status": _status_from_trace(records, state),
+        "status": status,
         "task": state.get("task") or run_started.get("task"),
         "cwd": state.get("cwd") or run_started.get("cwd"),
         "model": run_started.get("model"),
@@ -62,8 +75,11 @@ def summarize_trace(path: str | Path) -> JsonRecord:
         "event_counts": dict(sorted(event_counts.items())),
         "tool_counts": _tool_counts(tool_stats),
         "tool_stats": tool_stats,
-        "policy_denials": _policy_denials(records),
-        "failed_tools": _failed_tools(records),
+        "metrics": metrics,
+        "failure_category": metrics["failure_category"],
+        "test_result": test_result,
+        "policy_denials": policy_denials,
+        "failed_tools": failed_tools,
         "modified_files": _modified_files(records),
         "final_answer": _final_answer(records, state),
         "duration_seconds": timing.get("duration_seconds"),
@@ -176,6 +192,233 @@ def _tool_counts(tool_stats: dict[str, JsonRecord]) -> dict[str, int]:
     }
 
 
+def _metrics_summary(
+    *,
+    records: list[JsonRecord],
+    tool_stats: dict[str, JsonRecord],
+    policy_denials: list[JsonRecord],
+    failed_tools: list[JsonRecord],
+    test_result: JsonRecord | None,
+    status: str,
+    state: JsonRecord,
+) -> JsonRecord:
+    tool_call_count = _total_tool_calls(tool_stats)
+    metrics: JsonRecord = {
+        "tool_call_count": tool_call_count,
+        "average_tool_calls": float(tool_call_count),
+        "repeated_tool_calls": _repeated_tool_calls(records),
+        "repeated_read_count": _repeated_read_count(records),
+        "invalid_tool_call_count": _invalid_tool_call_count(records),
+        "policy_denial_count": len(policy_denials),
+        "failed_tool_count": len(failed_tools),
+        "context_packed_count": _event_count(records, "context_packed"),
+        "checkpoint_created_count": _event_count(records, "checkpoint_created"),
+        "run_resumed_count": _event_count(records, "run_resumed")
+        + _event_count(records, "resume_started"),
+        "test_result_count": _event_count(records, "test_result"),
+        "resume_success_rate": _resume_success_rate(records, status),
+        "test_passed": _test_passed(test_result),
+    }
+    metrics["failure_category"] = _failure_category(
+        status=status,
+        metrics=metrics,
+        records=records,
+        state=state,
+    )
+    return metrics
+
+
+def _event_count(records: list[JsonRecord], event_type: str) -> int:
+    return sum(1 for record in records if record.get("type") == event_type)
+
+
+def _resume_success_rate(records: list[JsonRecord], status: str) -> float | None:
+    resumed = _event_count(records, "run_resumed") + _event_count(records, "resume_started")
+    if resumed == 0:
+        return None
+    succeeded = 1 if status in {"success", "finished"} else 0
+    return succeeded / resumed
+
+
+def _total_tool_calls(tool_stats: dict[str, JsonRecord]) -> int:
+    total = 0
+    for stats in tool_stats.values():
+        requested = _as_int(stats.get("requested"))
+        completed = _as_int(stats.get("completed"))
+        total += max(requested, completed)
+    return total
+
+
+def _repeated_tool_calls(records: list[JsonRecord]) -> int:
+    counts: Counter[tuple[str, str]] = Counter()
+    for tool_name, args in _tool_call_signatures(records):
+        counts[(tool_name, _canonical_json(args))] += 1
+    return sum(count - 1 for count in counts.values() if count > 1)
+
+
+def _repeated_read_count(records: list[JsonRecord]) -> int:
+    counts: Counter[tuple[str, int, int]] = Counter()
+    for tool_name, args in _tool_call_signatures(records):
+        key = _read_call_key(tool_name, args)
+        if key is not None:
+            counts[key] += 1
+    return sum(count - 1 for count in counts.values() if count > 1)
+
+
+def _tool_call_signatures(records: list[JsonRecord]) -> list[tuple[str, JsonRecord]]:
+    actions: list[tuple[str, JsonRecord]] = []
+    for record in records:
+        if record.get("type") != "model_action":
+            continue
+        action = record.get("action")
+        if not isinstance(action, dict) or action.get("kind") != "tool":
+            continue
+        tool_args = action.get("tool_args")
+        actions.append(
+            (
+                _tool_name(action.get("tool_name")),
+                dict(tool_args) if isinstance(tool_args, dict) else {},
+            )
+        )
+
+    if actions:
+        return actions
+
+    fallback: list[tuple[str, JsonRecord]] = []
+    for record in records:
+        result = _tool_result(record)
+        if result is None:
+            continue
+        metadata = result.get("metadata")
+        fallback.append(
+            (
+                _tool_name(result.get("tool_name")),
+                dict(metadata) if isinstance(metadata, dict) else {},
+            )
+        )
+    return fallback
+
+
+def _read_call_key(tool_name: str, args: JsonRecord) -> tuple[str, int, int] | None:
+    if tool_name != "read_file":
+        return None
+    path = args.get("path") or args.get("file") or args.get("filename")
+    path_text = path if isinstance(path, str) and path else "<missing>"
+    return (
+        path_text,
+        _as_int(args.get("offset"), default=0),
+        _as_int(args.get("limit"), default=200),
+    )
+
+
+def _invalid_tool_call_count(records: list[JsonRecord]) -> int:
+    invalid_call_ids: set[str] = set()
+    anonymous_invalid = 0
+
+    for record in records:
+        if record.get("type") != "model_action":
+            continue
+        action = record.get("action")
+        if not isinstance(action, dict) or action.get("kind") != "tool":
+            continue
+        if _model_tool_action_is_valid(action):
+            continue
+        call_id = action.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            invalid_call_ids.add(call_id)
+        else:
+            anonymous_invalid += 1
+
+    for record in records:
+        result = _tool_result(record)
+        if result is None or not _is_invalid_tool_error(result.get("error")):
+            continue
+        call_id = result.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            invalid_call_ids.add(call_id)
+        else:
+            anonymous_invalid += 1
+
+    return len(invalid_call_ids) + anonymous_invalid
+
+
+def _model_tool_action_is_valid(action: JsonRecord) -> bool:
+    tool_name = action.get("tool_name")
+    tool_args = action.get("tool_args", {})
+    return isinstance(tool_name, str) and bool(tool_name) and isinstance(tool_args, dict)
+
+
+def _is_invalid_tool_error(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    invalid_prefixes = (
+        "unknown tool:",
+        "bad tool arguments:",
+        "path must be",
+        "old must be",
+        "new must be",
+        "cmd must be",
+        "cmd parsed to no arguments",
+        "could not parse cmd:",
+    )
+    return value.startswith(invalid_prefixes)
+
+
+def _failure_category(
+    *,
+    status: str,
+    metrics: JsonRecord,
+    records: list[JsonRecord],
+    state: JsonRecord,
+) -> str:
+    if not records or status in {"empty", "incomplete"}:
+        return "incomplete"
+    if status == "model_error" or _last_event(records, "model_error") is not None:
+        return "model_error"
+    if status in {"success", "finished"} and metrics.get("test_passed") is not False:
+        return "success"
+    if metrics.get("test_passed") is False:
+        return "test_failed"
+    if _as_int(metrics.get("policy_denial_count")) > 0:
+        return "policy_denied"
+    if _as_int(metrics.get("failed_tool_count")) > 0:
+        return "tool_failed"
+    if status == "max_iterations":
+        return "max_iterations"
+    if state.get("done") is True:
+        return "success"
+    return "incomplete"
+
+
+def _test_passed(test_result: JsonRecord | None) -> bool | None:
+    if test_result is None:
+        return None
+    passed = test_result.get("passed")
+    if isinstance(passed, bool):
+        return passed
+    if test_result.get("timed_out") is True:
+        return False
+    returncode = test_result.get("returncode")
+    if isinstance(returncode, int) and not isinstance(returncode, bool):
+        return returncode == 0
+    return None
+
+
+def _canonical_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        return repr(value)
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    return default
+
+
 def _tool_bucket(counts: dict[str, JsonRecord], tool_name: str) -> JsonRecord:
     if tool_name not in counts:
         counts[tool_name] = {
@@ -268,6 +511,28 @@ def _tool_result(record: JsonRecord) -> JsonRecord | None:
     result = record.get("result")
     if isinstance(result, dict):
         return result
+    return None
+
+
+def _test_result(records: list[JsonRecord]) -> JsonRecord | None:
+    for index, record in reversed(list(enumerate(records))):
+        if record.get("type") != "test_result":
+            continue
+        payload = record.get("result")
+        if not isinstance(payload, dict):
+            payload = record
+        result = {
+            "event_index": index,
+            "ts": record.get("ts"),
+            "case_id": payload.get("case_id") or record.get("case_id"),
+            "command": payload.get("command") or payload.get("cmd") or payload.get("test_command"),
+            "passed": payload.get("passed"),
+            "reason": payload.get("reason"),
+            "returncode": payload.get("returncode"),
+            "timed_out": payload.get("timed_out"),
+            "duration_seconds": payload.get("duration_seconds"),
+        }
+        return {key: value for key, value in result.items() if value is not None}
     return None
 
 

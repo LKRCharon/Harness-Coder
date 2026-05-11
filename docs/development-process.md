@@ -598,3 +598,72 @@ Interview angle:
 This is the first concrete version of the "Agent Runtime + Eval Harness"
 positioning. The project can now show a trace-backed eval report, even before
 larger benchmark suites and failure fixtures exist.
+
+## 0.2.0 Spec Audit
+
+Against the reliability spec, 0.2.0 was directionally correct but incomplete.
+
+Implemented:
+
+- Dynamic event-sourced loop with `model_action`, `policy_decision`,
+  `tool_result`, `state_updated`, and `run_finished`.
+- Policy-gated tools, including explicit `edit_file` and `run_tests`.
+- JSONL trace replay summary and a first eval report.
+- Basic modified-file tracking through `edit_file` metadata.
+
+Gaps:
+
+- No `context_packed` event or context layers.
+- No checkpoint/resume.
+- `run_tests` existed as a tool, but eval test results were not yet normalized
+  as `test_result` trace events.
+- No failure category metrics beyond failed tools and policy denials.
+- `AgentState` did not yet carry phase, file summaries, last error, open
+  questions, or budget.
+
+Conclusion:
+0.2.0 was a good replay/eval foundation, but not yet the reliability runtime
+described by the full spec.
+
+## 0.3.0 Milestone
+
+### 25. Context Packing Became Traceable
+
+Problem:
+Without an explicit context-packing event, the runtime cannot explain what the
+model was shown when older observations are folded out of hot context.
+
+Decision:
+Add `context_packed` before each model decision. The record separates hot
+context, working memory, cold trace summary, and budget.
+
+Interview angle:
+This is the first concrete answer to "what happens when context grows?" The
+system can show what it kept hot and what it summarized.
+
+### 26. Checkpoint And Resume Became Concrete
+
+Problem:
+0.2.0 could replay a finished trace, but it could not continue an interrupted
+run.
+
+Decision:
+Persist `checkpoint.json` after state updates and add resume support that
+appends `run_resumed` to the same trace.
+
+Interview angle:
+This moves checkpoint/resume from a README promise into an auditable runtime
+surface.
+
+### 27. Eval Metrics Now Come From Replay
+
+Problem:
+Eval reports should not maintain a separate understanding of traces.
+
+Decision:
+Eval appends normalized `test_result` events, replays the trace, and uses the
+replay summary for failure category and metrics such as repeated reads, invalid
+tool calls, context packs, and checkpoints.
+
+Interview angle:
+Replay is now the source of truth for both debugging and scoring.

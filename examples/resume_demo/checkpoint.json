@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "run_id": "run_resume_demo",
+  "checkpoint_id": "ckpt_after_exploration",
+  "created_after_event_index": 5,
+  "trace_path": "interrupt_resume_trace.jsonl",
+  "state": {
+    "task": "Summarize this repo after exploring it once.",
+    "cwd": "/tmp/harnesscoder-demo",
+    "iterations": 2,
+    "done": false,
+    "modified_files": [],
+    "observed_files": [
+      "README.md",
+      "harnesscoder/cli.py"
+    ]
+  },
+  "packed_context": {
+    "summary": "Exploration found a local event-sourced coding-agent harness with CLI and replay support.",
+    "observed_files": [
+      "README.md",
+      "harnesscoder/cli.py"
+    ]
+  },
+  "resume": {
+    "next_expected_event": "run_resumed",
+    "should_rerun_exploration": false
+  }
+}

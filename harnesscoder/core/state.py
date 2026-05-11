@@ -6,6 +6,7 @@ from uuid import uuid4
 
 
 ActionKind = Literal["tool", "finish"]
+Phase = Literal["init", "explore", "edit", "verify", "done", "failed"]
 
 
 @dataclass(slots=True)
@@ -72,6 +73,14 @@ class AgentState:
     actions: list[dict[str, Any]] = field(default_factory=list)
     observations: list[ToolObservation] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
+    phase: Phase = "init"
+    file_summaries: dict[str, str] = field(default_factory=dict)
+    last_error: str | None = None
+    open_questions: list[str] = field(default_factory=list)
+    budget: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.refresh_budget()
 
     def append_action(self, action: ModelAction) -> None:
         self.actions.append(action.to_record())
@@ -91,6 +100,8 @@ class AgentState:
         self.iterations += 1
         self.observations.append(observation)
         self._record_modified_file(observation)
+        self._apply_observation_governance(observation)
+        self.refresh_budget()
         self.messages.append(
             {
                 "role": "tool",
@@ -102,9 +113,13 @@ class AgentState:
             }
         )
 
-    def finish(self, answer: str) -> None:
+    def finish(self, answer: str, failed: bool = False) -> None:
         self.done = True
         self.final_answer = answer
+        self.phase = "failed" if failed else "done"
+        if failed and not self.last_error:
+            self.last_error = answer
+        self.refresh_budget()
         self.messages.append({"role": "assistant", "type": "final", "content": answer})
 
     def latest_observation_for(self, tool_name: str) -> ToolObservation | None:
@@ -114,6 +129,7 @@ class AgentState:
         return None
 
     def snapshot(self) -> dict[str, Any]:
+        self.refresh_budget()
         return {
             "run_id": self.run_id,
             "task": self.task,
@@ -122,6 +138,11 @@ class AgentState:
             "max_iterations": self.max_iterations,
             "done": self.done,
             "final_answer": self.final_answer,
+            "phase": self.phase,
+            "file_summaries": dict(self.file_summaries),
+            "last_error": self.last_error,
+            "open_questions": list(self.open_questions),
+            "budget": dict(self.budget),
             "modified_files": list(self.modified_files),
             "action_count": len(self.actions),
             "observation_count": len(self.observations),
@@ -129,6 +150,130 @@ class AgentState:
                 self.observations[-1].to_record() if self.observations else None
             ),
         }
+
+    def to_record(self) -> dict[str, Any]:
+        self.refresh_budget()
+        return {
+            "run_id": self.run_id,
+            "task": self.task,
+            "cwd": self.cwd,
+            "max_iterations": self.max_iterations,
+            "iterations": self.iterations,
+            "done": self.done,
+            "final_answer": self.final_answer,
+            "modified_files": list(self.modified_files),
+            "actions": list(self.actions),
+            "observations": [
+                observation.to_record() for observation in self.observations
+            ],
+            "messages": list(self.messages),
+            "phase": self.phase,
+            "file_summaries": dict(self.file_summaries),
+            "last_error": self.last_error,
+            "open_questions": list(self.open_questions),
+            "budget": dict(self.budget),
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> "AgentState":
+        observations = [
+            ToolObservation(
+                call_id=str(raw.get("call_id", "")),
+                tool_name=str(raw.get("tool_name", "")),
+                ok=bool(raw.get("ok")),
+                output=str(raw.get("output", "")),
+                error=(
+                    str(raw["error"])
+                    if raw.get("error") is not None
+                    else None
+                ),
+                metadata=(
+                    dict(raw.get("metadata", {}))
+                    if isinstance(raw.get("metadata"), dict)
+                    else {}
+                ),
+            )
+            for raw in record.get("observations", [])
+            if isinstance(raw, dict)
+        ]
+        phase = record.get("phase", "init")
+        if phase not in {"init", "explore", "edit", "verify", "done", "failed"}:
+            phase = "init"
+
+        state = cls(
+            run_id=str(record["run_id"]),
+            task=str(record.get("task", "")),
+            cwd=str(record.get("cwd", "")),
+            max_iterations=int(record.get("max_iterations", 0)),
+            iterations=int(record.get("iterations", 0)),
+            done=bool(record.get("done", False)),
+            final_answer=(
+                str(record["final_answer"])
+                if record.get("final_answer") is not None
+                else None
+            ),
+            modified_files=[
+                str(path) for path in record.get("modified_files", [])
+            ],
+            actions=[
+                dict(action)
+                for action in record.get("actions", [])
+                if isinstance(action, dict)
+            ],
+            observations=observations,
+            messages=[
+                dict(message)
+                for message in record.get("messages", [])
+                if isinstance(message, dict)
+            ],
+            phase=phase,
+            file_summaries=(
+                {
+                    str(path): str(summary)
+                    for path, summary in record.get("file_summaries", {}).items()
+                }
+                if isinstance(record.get("file_summaries"), dict)
+                else {}
+            ),
+            last_error=(
+                str(record["last_error"])
+                if record.get("last_error") is not None
+                else None
+            ),
+            open_questions=[
+                str(question) for question in record.get("open_questions", [])
+            ],
+            budget=(
+                dict(record.get("budget", {}))
+                if isinstance(record.get("budget"), dict)
+                else {}
+            ),
+        )
+        state.refresh_budget()
+        return state
+
+    def refresh_budget(self) -> None:
+        self.budget["max_iterations"] = self.max_iterations
+        self.budget["iterations_used"] = self.iterations
+        self.budget["remaining_iterations"] = max(
+            0,
+            self.max_iterations - self.iterations,
+        )
+
+    def governance_snapshot(self, include_budget: bool = True) -> dict[str, Any]:
+        self.refresh_budget()
+        snapshot = {
+            "phase": self.phase,
+            "file_summaries": dict(self.file_summaries),
+            "last_error": self.last_error,
+            "open_questions": list(self.open_questions),
+            "modified_files": list(self.modified_files),
+            "done": self.done,
+            "final_answer": self.final_answer,
+        }
+        if include_budget:
+            snapshot["budget"] = dict(self.budget)
+        return snapshot
 
     def _record_modified_file(self, observation: ToolObservation) -> None:
         if observation.tool_name != "edit_file" or not observation.ok:
@@ -138,3 +283,66 @@ class AgentState:
         path = observation.metadata.get("path")
         if isinstance(path, str) and path not in self.modified_files:
             self.modified_files.append(path)
+
+    def _apply_observation_governance(self, observation: ToolObservation) -> None:
+        if not observation.ok:
+            self.last_error = _format_observation_error(observation)
+
+        if observation.tool_name in {"read_file", "search_code"}:
+            self.phase = "explore"
+        elif (
+            observation.tool_name == "edit_file"
+            and observation.metadata.get("changed") is True
+        ):
+            self.phase = "edit"
+        elif observation.tool_name == "run_tests":
+            self.phase = "verify"
+        elif observation.tool_name == "finish":
+            self.phase = "done" if observation.ok else "failed"
+
+        if observation.tool_name == "read_file" and observation.ok:
+            path = observation.metadata.get("path")
+            if isinstance(path, str):
+                self.file_summaries[path] = _summarize_read_observation(observation)
+
+        if (
+            observation.tool_name == "edit_file"
+            and observation.ok
+            and observation.metadata.get("changed") is True
+        ):
+            path = observation.metadata.get("path")
+            if isinstance(path, str):
+                self.file_summaries.pop(path, None)
+
+
+def _format_observation_error(observation: ToolObservation) -> str:
+    detail = observation.error or observation.short_output(300)
+    return f"{observation.tool_name} failed: {detail}"
+
+
+def _summarize_read_observation(observation: ToolObservation) -> str:
+    path = observation.metadata.get("path", "<unknown>")
+    offset = observation.metadata.get("offset")
+    total_lines = observation.metadata.get("total_lines")
+    lines = [_strip_number_prefix(line).strip() for line in observation.output.splitlines()]
+    content_lines = [line for line in lines if line]
+    preview = " ".join(content_lines)
+    preview = " ".join(preview.split())
+    if len(preview) > 240:
+        preview = f"{preview[:240]}... [truncated {len(preview) - 240} chars]"
+    if not preview:
+        preview = "empty or whitespace-only range"
+
+    line_prefix = ""
+    if isinstance(offset, int) and isinstance(total_lines, int):
+        start_line = offset + 1
+        end_line = min(total_lines, offset + len(lines))
+        line_prefix = f"lines {start_line}-{end_line} of {total_lines}: "
+    return f"{path}: {line_prefix}{preview}"
+
+
+def _strip_number_prefix(line: str) -> str:
+    if "|" not in line:
+        return line
+    prefix, content = line.split("|", 1)
+    return content if prefix.strip().isdigit() else line
