@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "harnesscoder"
+version = "0.1.0"
+description = "A local event-sourced coding agent harness for real repository tasks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "HarnessCoder Contributors" }
+]
+dependencies = []
+
+[project.scripts]
+harnesscoder = "harnesscoder.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["harnesscoder"]
+
