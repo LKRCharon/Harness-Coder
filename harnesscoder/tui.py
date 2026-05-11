@@ -254,6 +254,8 @@ class HarnessCoderTui:
             "tools": self._cmd_tools,
             "read": self._cmd_read,
             "search": self._cmd_search,
+            "edit": self._cmd_edit,
+            "test": self._cmd_test,
             "run": self._cmd_run,
             "trace": self._cmd_trace,
         }
@@ -289,6 +291,8 @@ class HarnessCoderTui:
                         "/tools - list direct slash tools",
                         "/read <path> [offset] [limit] - call read_file",
                         "/search <query> [path] - call search_code",
+                        "/edit <path> <old> <new> - call edit_file exact replacement",
+                        "/test [cmd] - call run_tests through the test policy",
                         "/run <cmd> - call run_command through policy gate",
                         "/trace [latest|run_id|path] - summarize a trace",
                         "/quit - exit",
@@ -386,7 +390,8 @@ class HarnessCoderTui:
             Message(
                 "system",
                 "Direct tools: /read -> read_file, /search -> search_code, "
-                "/run -> run_command with policy gate.",
+                "/edit -> edit_file, /test -> run_tests, /run -> run_command "
+                "with policy gate.",
             )
         )
 
@@ -404,6 +409,23 @@ class HarnessCoderTui:
             return
         path = args[1] if len(args) > 1 else "."
         self._direct_tool("search_code", {"query": args[0], "path": path})
+
+    def _cmd_edit(self, args: list[str], _line: str) -> None:
+        if len(args) < 3:
+            self.messages.append(Message("error", "Usage: /edit <path> <old> <new>"))
+            return
+        self._direct_tool(
+            "edit_file",
+            {"path": args[0], "old": args[1], "new": args[2]},
+        )
+
+    def _cmd_test(self, _args: list[str], line: str) -> None:
+        prefix = "/test"
+        cmd = line[len(prefix) :].strip()
+        payload: dict[str, object] = {"timeout": 60}
+        if cmd:
+            payload["cmd"] = cmd
+        self._direct_tool("run_tests", payload)
 
     def _cmd_run(self, _args: list[str], line: str) -> None:
         prefix = "/run "

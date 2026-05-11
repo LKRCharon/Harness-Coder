@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Sequence
 
+from harnesscoder import __version__
 from harnesscoder.core.models import OpenAICodexModel, ScriptedModel
 from harnesscoder.core.runner import AgentRunner
 
@@ -21,6 +22,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the interactive terminal UI.",
     )
     parser.add_argument(
+        "--replay",
+        metavar="TRACE",
+        help="Summarize a trace.jsonl file or run directory and exit.",
+    )
+    parser.add_argument(
+        "--eval",
+        metavar="CASES_JSON",
+        help="Run eval cases and print a Markdown report.",
+    )
+    parser.add_argument(
+        "--eval-report",
+        metavar="PATH",
+        help="Write the eval Markdown report to a file.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"harnesscoder {__version__}",
+    )
+    parser.add_argument(
         "--cwd",
         default=".",
         help="Repository working directory. Defaults to the current directory.",
@@ -35,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--trace-root",
         default=".harnesscoder/runs",
         help="Directory where run traces are written.",
+    )
+    parser.add_argument(
+        "--eval-trace-root",
+        default=".harnesscoder/eval-runs",
+        help="Directory where eval run traces are written.",
     )
     parser.add_argument(
         "--provider",
@@ -70,6 +96,37 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     task = " ".join(args.task).strip()
     cwd = Path(args.cwd).resolve()
+
+    if args.replay:
+        from harnesscoder.replay import summarize_trace
+
+        import json
+
+        summary = summarize_trace(args.replay)
+        print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    if args.eval:
+        from harnesscoder.eval_runner import render_markdown_report, run_eval_cases
+
+        model = build_model(args)
+        results = run_eval_cases(
+            cases_path=args.eval,
+            workspace_root=cwd,
+            provider=args.provider,
+            trace_root=Path(args.eval_trace_root),
+            max_iterations=args.max_iterations,
+            model=model,
+        )
+        report = render_markdown_report(results)
+        if args.eval_report:
+            report_path = Path(args.eval_report)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report, encoding="utf-8")
+            print(f"eval report: {report_path.resolve()}")
+        else:
+            print(report, end="")
+        return 0 if all(result.passed for result in results) else 1
 
     if args.tui:
         from harnesscoder.tui import TuiConfig, run_tui

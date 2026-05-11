@@ -68,6 +68,7 @@ class AgentState:
     iterations: int = 0
     done: bool = False
     final_answer: str | None = None
+    modified_files: list[str] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
     observations: list[ToolObservation] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -89,6 +90,7 @@ class AgentState:
     def append_observation(self, observation: ToolObservation) -> None:
         self.iterations += 1
         self.observations.append(observation)
+        self._record_modified_file(observation)
         self.messages.append(
             {
                 "role": "tool",
@@ -120,6 +122,7 @@ class AgentState:
             "max_iterations": self.max_iterations,
             "done": self.done,
             "final_answer": self.final_answer,
+            "modified_files": list(self.modified_files),
             "action_count": len(self.actions),
             "observation_count": len(self.observations),
             "last_observation": (
@@ -127,3 +130,11 @@ class AgentState:
             ),
         }
 
+    def _record_modified_file(self, observation: ToolObservation) -> None:
+        if observation.tool_name != "edit_file" or not observation.ok:
+            return
+        if observation.metadata.get("changed") is not True:
+            return
+        path = observation.metadata.get("path")
+        if isinstance(path, str) and path not in self.modified_files:
+            self.modified_files.append(path)

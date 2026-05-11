@@ -4,12 +4,15 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 
 MAX_TOOL_OUTPUT = 16_000
+DEFAULT_TEST_COMMAND = "python -m unittest discover"
+MAX_COMMAND_TIMEOUT = 120
 
 
 @dataclass(slots=True)
@@ -41,6 +44,8 @@ class ToolRegistry:
         self._tools: dict[str, ToolFn] = {
             "read_file": self.read_file,
             "search_code": self.search_code,
+            "edit_file": self.edit_file,
+            "run_tests": self.run_tests,
             "run_command": self.run_command,
         }
 
@@ -165,14 +170,187 @@ class ToolRegistry:
         timeout: int = 30,
     ) -> ToolResult:
         tool_name = "run_command"
-        timeout = max(1, min(int(timeout), 120))
+        timeout = max(1, min(int(timeout), MAX_COMMAND_TIMEOUT))
         try:
             parts = shlex.split(cmd)
         except ValueError as exc:
             return ToolResult(call_id, tool_name, False, "", f"could not parse cmd: {exc}")
+        if not parts:
+            return ToolResult(call_id, tool_name, False, "", "cmd parsed to no arguments")
+
+        return self._run_subprocess(
+            call_id=call_id,
+            tool_name=tool_name,
+            cmd=cmd,
+            parts=parts,
+            timeout=timeout,
+        )
+
+    def edit_file(
+        self,
+        call_id: str,
+        path: str,
+        old: str,
+        new: str,
+    ) -> ToolResult:
+        tool_name = "edit_file"
+        if not isinstance(path, str):
+            return ToolResult(call_id, tool_name, False, "", "path must be a string")
+        if not isinstance(old, str) or not old:
+            return ToolResult(call_id, tool_name, False, "", "old must be a non-empty string")
+        if not isinstance(new, str):
+            return ToolResult(call_id, tool_name, False, "", "new must be a string")
+
+        try:
+            target = self._resolve_workspace_path(path)
+        except ValueError as exc:
+            return ToolResult(call_id, tool_name, False, "", str(exc))
+        rel_path = str(target.relative_to(self.cwd))
+
+        if not target.exists():
+            return ToolResult(call_id, tool_name, False, "", f"file not found: {path}")
+        if not target.is_file():
+            return ToolResult(call_id, tool_name, False, "", f"not a file: {path}")
+
+        try:
+            text = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"file is not valid UTF-8: {exc}",
+                metadata={"path": rel_path, "changed": False, "replacement_count": 0},
+            )
+        except OSError as exc:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"could not read file: {exc}",
+                metadata={"path": rel_path, "changed": False, "replacement_count": 0},
+            )
+
+        match_count = text.count(old)
+        base_metadata = {
+            "path": rel_path,
+            "changed": False,
+            "replacement_count": 0,
+            "match_count": match_count,
+            "old_length": len(old),
+            "new_length": len(new),
+        }
+        if match_count == 0:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                "old text was not found",
+                metadata=base_metadata,
+            )
+        if match_count > 1:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"old text is not unique: found {match_count} matches",
+                metadata=base_metadata,
+            )
+        if old == new:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                ok=True,
+                output=f"No changes made to {rel_path}: old and new text are identical.",
+                metadata=base_metadata,
+            )
+
+        updated = text.replace(old, new, 1)
+        try:
+            target.write_text(updated, encoding="utf-8")
+        except OSError as exc:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"could not write file: {exc}",
+                metadata=base_metadata,
+            )
+
+        metadata = dict(base_metadata)
+        metadata["changed"] = True
+        metadata["replacement_count"] = 1
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            ok=True,
+            output=f"Replaced 1 occurrence in {rel_path}.",
+            metadata=metadata,
+        )
+
+    def run_tests(
+        self,
+        call_id: str,
+        cmd: str | None = None,
+        timeout: int = 60,
+    ) -> ToolResult:
+        tool_name = "run_tests"
+        timeout = max(1, min(int(timeout), MAX_COMMAND_TIMEOUT))
+        defaulted = cmd is None or (isinstance(cmd, str) and not cmd.strip())
+        if defaulted:
+            command = DEFAULT_TEST_COMMAND
+            parts = [sys.executable, "-m", "unittest", "discover"]
+        elif isinstance(cmd, str):
+            command = cmd
+            try:
+                parts = shlex.split(cmd)
+            except ValueError as exc:
+                return ToolResult(
+                    call_id,
+                    tool_name,
+                    False,
+                    "",
+                    f"could not parse cmd: {exc}",
+                )
+            if not parts:
+                return ToolResult(call_id, tool_name, False, "", "cmd parsed to no arguments")
+        else:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                "cmd must be a string when provided",
+            )
+
+        result = self._run_subprocess(
+            call_id=call_id,
+            tool_name=tool_name,
+            cmd=command,
+            parts=parts,
+            timeout=timeout,
+        )
+        result.metadata["defaulted"] = defaulted
+        return result
+
+    def _run_subprocess(
+        self,
+        call_id: str,
+        tool_name: str,
+        cmd: str,
+        parts: list[str],
+        timeout: int,
+    ) -> ToolResult:
+        timeout = max(1, min(int(timeout), MAX_COMMAND_TIMEOUT))
 
         env = {
             **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1",
         }
         try:

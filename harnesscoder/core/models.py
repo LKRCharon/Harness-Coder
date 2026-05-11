@@ -10,6 +10,9 @@ from typing import Any, Protocol
 from harnesscoder.core.state import AgentState, ModelAction
 
 
+MODEL_TOOL_NAMES = ("read_file", "search_code", "edit_file", "run_tests", "run_command")
+
+
 class ModelAdapter(Protocol):
     name: str
 
@@ -160,7 +163,7 @@ Allowed tool action:
 {
   "kind": "tool",
   "rationale": "why this tool call is the next useful step",
-  "tool_name": "read_file | search_code | run_command",
+  "tool_name": "read_file | search_code | edit_file | run_tests | run_command",
   "tool_args": {}
 }
 
@@ -174,9 +177,14 @@ Allowed finish action:
 Tool schemas:
 - read_file(path: string, offset: int = 0, limit: int = 200)
 - search_code(query: string, path: string = ".")
+- edit_file(path: string, old: string, new: string)
+- run_tests(cmd: string | null = null, timeout: int = 60)
 - run_command(cmd: string, timeout: int = 30)
 
-Prefer read-only repository inspection. The policy layer may deny unsafe commands.
+Use edit_file only for exact replacements where old is expected to match once.
+Prefer run_tests for local python/pytest/unittest test execution. Reserve
+run_command for repository inspection and other policy-allowed commands. The
+policy layer may deny unsafe commands.
 Answer in the user's language when finishing."""
 
 
@@ -193,7 +201,7 @@ def _state_view(state: AgentState) -> dict[str, Any]:
         "cwd": state.cwd,
         "iterations": state.iterations,
         "max_iterations": state.max_iterations,
-        "available_tools": ["read_file", "search_code", "run_command"],
+        "available_tools": list(MODEL_TOOL_NAMES),
         "recent_observations": [
             {
                 "tool_name": observation.tool_name,
@@ -280,7 +288,7 @@ def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
         tool_args = payload.get("tool_args", {})
         if not isinstance(tool_name, str):
             raise ModelAdapterError("tool action must include string tool_name")
-        if tool_name not in {"read_file", "search_code", "run_command"}:
+        if tool_name not in MODEL_TOOL_NAMES:
             raise ModelAdapterError(f"tool action requested unknown tool: {tool_name}")
         if not isinstance(tool_args, dict):
             raise ModelAdapterError("tool action tool_args must be an object")

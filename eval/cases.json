@@ -1,0 +1,10 @@
+[
+  {
+    "id": "smoke-scripted-runtime-tests",
+    "task": "Run a short repository orientation pass and summarize what HarnessCoder does.",
+    "cwd": ".",
+    "test_command": "python -m unittest discover -s tests",
+    "success_returncode": 0,
+    "timeout": 30
+  }
+]

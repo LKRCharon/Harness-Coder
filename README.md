@@ -18,21 +18,29 @@ the model's evolving plan. A DAG or LangGraph-style workflow can be useful for
 the eval pipeline around the agent, but the agent itself should remain a
 policy-gated loop.
 
-## MVP Status
+## Current Status
 
-This first vertical slice includes:
+Version `0.2.0` is a runnable local runtime plus the first replay/eval layer.
+It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
   - `read_file(path, offset=0, limit=200)`
   - `search_code(query, path=".")`
+  - `edit_file(path, old, new)`
+  - `run_tests(cmd=None, timeout=60)`
   - `run_command(cmd, timeout=30)`
 - A minimal policy gate before every tool call.
 - JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`.
-- A CLI entrypoint:
+- Trace replay summaries through `python -m harnesscoder.replay`.
+- A minimal eval harness that runs cases, executes tests, scores results, and
+  renders a Markdown report.
+- CLI entrypoints:
 
 ```bash
 python -m harnesscoder "看一下这个 repo 是做什么的"
+python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
+python -m harnesscoder --eval eval/cases.json
 ```
 
 The scripted model currently performs a small repo-orientation pass: search for
@@ -58,6 +66,8 @@ Use slash commands for direct tools and runtime controls:
 /base-url https://api.dest.space
 /read README.md
 /search HarnessCoder
+/edit README.md old new
+/test python -m unittest discover -s tests
 /run git status --short
 /trace latest
 ```
@@ -111,16 +121,25 @@ See [docs/development-process.md](docs/development-process.md) for the running
 engineering log: design decisions, bugs encountered during real provider
 integration, fixes, and interview-ready talking points.
 
-## Future Replay And Eval Plan
+## Replay And Eval
 
-Replay should load a trace, reconstruct state transitions, and optionally stop at
-any step to inspect the model action, policy decision, tool result, and updated
-state.
+Replay loads a trace and reconstructs a structured summary:
 
-Eval should stay workflow-shaped around the dynamic agent loop:
+```bash
+python -m harnesscoder.replay .harnesscoder/runs/<run_id>/trace.jsonl
+python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
+```
+
+Eval stays workflow-shaped around the dynamic agent loop:
 
 ```text
 setup repo -> run agent -> run tests -> collect trace -> score -> report
+```
+
+Run the local smoke eval:
+
+```bash
+python -m harnesscoder --eval eval/cases.json
 ```
 
 Near-term TODOs:
@@ -130,5 +149,5 @@ Near-term TODOs:
 - Live-test and harden the OpenAI-compatible model adapter against real traffic.
 - Add context packing and compaction events to the trace.
 - Add checkpoint/resume from trace plus workspace metadata.
-- Add failure replay fixtures under `replay/`.
-- Add simple eval cases under `eval/` with scoring and reports.
+- Add richer failure replay fixtures under `replay/`.
+- Add bug-fix eval cases that exercise `edit_file` with real failing tests.

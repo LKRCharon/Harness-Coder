@@ -549,3 +549,52 @@ If asked "what would you do next?", good answers are:
 - Add an eval harness that runs tasks, tests the repo, scores traces, and
   compares regressions.
 - Add policy profiles such as plan-only, accept-edits, and bypass-permissions.
+
+## 0.2.0 Milestone
+
+### 22. Edit And Test Tools Are Separate From Generic Commands
+
+Problem:
+If every model action uses `run_command`, test execution and file mutation are
+hard to distinguish in traces and policy decisions.
+
+Decision:
+Add explicit `edit_file` and `run_tests` tools. `edit_file` only supports exact
+old/new replacement and requires the old text to match exactly once. `run_tests`
+is a narrower test-command wrapper for Python unittest/pytest style commands.
+
+Interview angle:
+This makes tool intent machine-readable. An eval report can now separate
+repository inspection, mutation, and verification instead of treating every
+local operation as an opaque shell command.
+
+### 23. Trace Replay Became A First-Class Artifact
+
+Problem:
+A trace is useful only if the project can turn it back into a summary without
+manual JSONL inspection.
+
+Decision:
+Add `harnesscoder.replay` with APIs to load traces, reconstruct final state, and
+summarize event counts, tool counts, policy denials, failed tools, modified
+files, timing, and final answers.
+
+Interview angle:
+Replay is the bridge between runtime and eval. It turns "the agent ran" into
+"we can audit what happened and score behavior over time."
+
+### 24. Eval Produces A Report, Not Just A Pass/Fail Exit Code
+
+Problem:
+For an interview project, the strongest artifact is not a one-off successful
+demo. It is a report that compares runs and exposes traces.
+
+Decision:
+Add `harnesscoder.eval_runner` and `eval/cases.json`. Each case runs the agent,
+executes a test command, counts trace tool usage, scores the result, and renders
+a Markdown report.
+
+Interview angle:
+This is the first concrete version of the "Agent Runtime + Eval Harness"
+positioning. The project can now show a trace-backed eval report, even before
+larger benchmark suites and failure fixtures exist.
