@@ -20,7 +20,7 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.7.1` is a runnable local runtime with real bugfix and minimal
+Version `0.7.2` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context governance, checkpoint/resume support, and a
 lightweight TUI with live refresh. It includes:

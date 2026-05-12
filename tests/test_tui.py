@@ -23,6 +23,72 @@ def make_config(cwd: Path) -> TuiConfig:
 
 
 class TuiRenderLogicTests(unittest.TestCase):
+    def test_request_exit_blocks_when_agent_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            tui._active_run = ActiveRun(
+                prompt="task",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+
+            self.assertFalse(tui._request_exit())
+            self.assertEqual(tui.status, "exit blocked: active run")
+            self.assertIn("Agent is still running", tui.messages[-1].text)
+
+    def test_active_run_blocks_mutating_slash_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            tui._active_run = ActiveRun(
+                prompt="task",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/edit README.md old new", screen)
+
+            self.assertEqual(tui.status, "/edit blocked: active run")
+            self.assertIn("blocked while the agent is running", tui.messages[-1].text)
+
+    def test_active_run_allows_read_only_slash_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            tui._active_run = ActiveRun(
+                prompt="task",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/status", screen)
+
+            self.assertTrue(any(message.text.startswith("cwd:") for message in tui.messages))
+            self.assertNotIn("blocked", tui.status)
+
+    def test_draw_places_status_above_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            tui.messages.clear()
+            tui.status = "ready"
+            tui.input_buffer = "hello"
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._draw(screen)
+
+            self.assertEqual(screen.text_at(8, 0), "ready")
+            self.assertEqual(screen.text_at(9, 0), "> hello")
+
     def test_latest_trace_event_label_describes_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
@@ -101,6 +167,31 @@ class TuiRenderLogicTests(unittest.TestCase):
             self.assertIsNone(tui._active_run)
             self.assertEqual(tui.last_trace_path, trace_path)
             self.assertTrue(any(message.text.startswith("done") for message in tui.messages))
+
+
+class _FakeScreen:
+    def __init__(self, height: int, width: int) -> None:
+        self.height = height
+        self.width = width
+        self.calls: list[tuple[int, int, str]] = []
+
+    def erase(self) -> None:
+        self.calls.clear()
+
+    def getmaxyx(self) -> tuple[int, int]:
+        return (self.height, self.width)
+
+    def addstr(self, row: int, col: int, text: str, _attrs: int = 0) -> None:
+        self.calls.append((row, col, text))
+
+    def refresh(self) -> None:
+        pass
+
+    def text_at(self, row: int, col: int) -> str | None:
+        for call_row, call_col, text in reversed(self.calls):
+            if call_row == row and call_col == col:
+                return text
+        return None
 
 
 if __name__ == "__main__":

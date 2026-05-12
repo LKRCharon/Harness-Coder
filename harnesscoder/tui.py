@@ -19,6 +19,7 @@ from harnesscoder.core.tools import ToolRegistry
 
 
 Role = Literal["system", "user", "assistant", "tool", "error"]
+ACTIVE_RUN_ALLOWED_COMMANDS = {"help", "status", "trace"}
 
 
 @dataclass(slots=True)
@@ -91,7 +92,9 @@ class HarnessCoderTui:
             try:
                 key = screen.get_wch()
             except KeyboardInterrupt:
-                return 0
+                if self._request_exit():
+                    return 0
+                continue
             except curses.error:
                 continue
 
@@ -104,7 +107,9 @@ class HarnessCoderTui:
                 if not line:
                     continue
                 if line in {"/quit", "/exit"}:
-                    return 0
+                    if self._request_exit():
+                        return 0
+                    continue
                 if line.startswith("/"):
                     self._handle_slash_command(line, screen)
                 else:
@@ -116,7 +121,9 @@ class HarnessCoderTui:
                 continue
 
             if key == "\x03" or key == "\x04":
-                return 0
+                if self._request_exit():
+                    return 0
+                continue
 
             if isinstance(key, str) and key.isprintable():
                 self.input_buffer += key
@@ -162,11 +169,11 @@ class HarnessCoderTui:
 
         divider = "-" * (width - 1)
         self._safe_addstr(screen, height - 3, 0, divider, "muted")
+        self._safe_addstr(screen, height - 2, 0, self._footer_status()[: width - 1], "muted")
         prompt = "> " + self.input_buffer
         if self._active_run:
             prompt = "(running) " + prompt
-        self._safe_addstr(screen, height - 2, 0, prompt[: width - 1], "user")
-        self._safe_addstr(screen, height - 1, 0, self._footer_status()[: width - 1], "muted")
+        self._safe_addstr(screen, height - 1, 0, prompt[: width - 1], "user")
         screen.refresh()
 
     def _draw_compact(self, screen: curses.window, height: int, width: int) -> None:
@@ -385,6 +392,18 @@ class HarnessCoderTui:
             return self._active_run_line()
         return self.status
 
+    def _request_exit(self) -> bool:
+        if self._active_run is None:
+            return True
+        message = (
+            "Agent is still running. Wait for it to finish before exiting. "
+            "Cancellation is not implemented yet."
+        )
+        self.status = "exit blocked: active run"
+        if not self.messages or self.messages[-1].text != message:
+            self.messages.append(Message("error", message))
+        return False
+
     def _handle_slash_command(self, line: str, screen: curses.window) -> None:
         try:
             parts = shlex.split(line)
@@ -397,6 +416,17 @@ class HarnessCoderTui:
 
         command = parts[0][1:]
         args = parts[1:]
+
+        if self._active_run is not None and command not in ACTIVE_RUN_ALLOWED_COMMANDS:
+            self.messages.append(
+                Message(
+                    "error",
+                    f"/{command} is blocked while the agent is running. "
+                    "Allowed commands: /help, /status, /trace.",
+                )
+            )
+            self.status = f"/{command} blocked: active run"
+            return
 
         handlers = {
             "help": self._cmd_help,
