@@ -18,6 +18,9 @@ class PolicyDecision:
 class ToolPolicy:
     """Small local policy gate for MVP tool execution."""
 
+    def __init__(self, allowed_tools: set[str] | None = None) -> None:
+        self.allowed_tools = set(allowed_tools) if allowed_tools is not None else None
+
     _blocked_command_heads = {
         "rm",
         "rmdir",
@@ -58,9 +61,14 @@ class ToolPolicy:
     ) -> PolicyDecision:
         if not tool_name:
             return PolicyDecision(False, "missing tool name")
+        if self.allowed_tools is not None and tool_name not in self.allowed_tools:
+            return PolicyDecision(False, f"tool is not allowed for this run: {tool_name}")
 
         if tool_name in {"read_file", "search_code"}:
             return self._check_path_tool(tool_name, tool_args, cwd)
+
+        if tool_name == "write_file":
+            return self._check_write_file(tool_args, cwd)
 
         if tool_name == "edit_file":
             return self._check_edit_file(tool_args, cwd)
@@ -104,6 +112,23 @@ class ToolPolicy:
         if not isinstance(new, str):
             return PolicyDecision(False, "new must be a string")
         return PolicyDecision(True, "edit_file path and replacement are allowed")
+
+    def _check_write_file(
+        self,
+        tool_args: dict[str, Any],
+        cwd: Path,
+    ) -> PolicyDecision:
+        path_decision = self._check_path_tool("write_file", tool_args, cwd)
+        if not path_decision.allowed:
+            return path_decision
+
+        content = tool_args.get("content")
+        if not isinstance(content, str):
+            return PolicyDecision(False, "content must be a string")
+        overwrite = tool_args.get("overwrite", False)
+        if not isinstance(overwrite, bool):
+            return PolicyDecision(False, "overwrite must be a boolean")
+        return PolicyDecision(True, "write_file path and content are allowed")
 
     def _check_run_command(self, tool_args: dict[str, Any]) -> PolicyDecision:
         cmd = tool_args.get("cmd")

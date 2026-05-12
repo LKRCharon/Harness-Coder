@@ -105,6 +105,7 @@ class Spec030Tests(unittest.TestCase):
             "test_failed",
             "policy_denied",
             "tool_failed",
+            "verifier_failed",
             "model_error",
             "max_iterations",
             "incomplete",

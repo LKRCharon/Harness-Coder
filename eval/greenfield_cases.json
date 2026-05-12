@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "id": "greenfield-add-one-module",
+      "task": "Create a minimal Python module from scratch. Write math_utils.py with an add_one(value) function that returns value + 1. Write test_math_utils.py with unittest coverage for positive and negative inputs. Run python -m unittest discover, then finish only after tests pass.",
+      "repo_fixture": "examples/greenfield_demo/repo",
+      "cwd": ".",
+      "allowed_tools": ["write_file", "read_file", "run_tests", "run_command"],
+      "step_budget": 8,
+      "test_command": "python -m unittest discover",
+      "verifier": "python -c \"from pathlib import Path; import math_utils; assert math_utils.add_one(41) == 42; assert Path('math_utils.py').exists(); assert Path('test_math_utils.py').exists()\"",
+      "success_returncode": 0,
+      "timeout": 30
+    }
+  ]
+}

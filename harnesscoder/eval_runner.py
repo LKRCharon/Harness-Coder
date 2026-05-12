@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
+from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
@@ -32,6 +33,9 @@ class EvalCase:
     test_command: str
     timeout: int
     repo_fixture: str | None = None
+    allowed_tools: tuple[str, ...] | None = None
+    step_budget: int | None = None
+    verifier: str | None = None
     success_contains: str | tuple[str, ...] | None = None
     success_returncode: int | None = None
 
@@ -43,6 +47,9 @@ class EvalCase:
         test_command = _required_str(record, "test_command")
         timeout = _required_int(record, "timeout")
         repo_fixture = _optional_str(record, "repo_fixture", None)
+        allowed_tools = _optional_str_tuple(record, "allowed_tools", None)
+        step_budget = _optional_int(record, "step_budget", None)
+        verifier = _optional_str(record, "verifier", None)
         success_contains = _success_contains(record.get("success_contains"))
         success_returncode = _optional_int(record, "success_returncode", None)
 
@@ -59,6 +66,9 @@ class EvalCase:
             test_command=test_command,
             timeout=timeout,
             repo_fixture=repo_fixture,
+            allowed_tools=allowed_tools,
+            step_budget=step_budget,
+            verifier=verifier,
             success_contains=success_contains,
             success_returncode=success_returncode,
         )
@@ -84,6 +94,13 @@ class EvalResult:
     test_timed_out: bool = False
     test_duration_seconds: float = 0.0
     test_passed: bool = False
+    verifier_command: str = ""
+    verifier_returncode: int | None = None
+    verifier_stdout: str = ""
+    verifier_stderr: str = ""
+    verifier_timed_out: bool = False
+    verifier_duration_seconds: float = 0.0
+    verifier_passed: bool = True
     failure_category: str = "incomplete"
     metrics: dict[str, Any] = field(default_factory=dict)
     trace_summary: dict[str, Any] = field(default_factory=dict)
@@ -170,16 +187,28 @@ def run_eval_cases(
             cases_path=resolved_cases_path,
         )
         case_cwd = _resolve_inside(workspace.run_root, case.cwd)
+        effective_max_iterations = case.step_budget or max_iterations
         runner = AgentRunner(
             model=model or _build_model(provider),
             cwd=case_cwd,
             trace_root=Path(trace_root),
-            max_iterations=max_iterations,
+            max_iterations=effective_max_iterations,
+            policy=ToolPolicy(set(case.allowed_tools) if case.allowed_tools else None),
         )
         run_result = runner.run(case.task)
         test_result = _run_test_command(case, case_cwd)
+        verifier_result = _run_verifier(case, case_cwd)
         test_passed, test_reason = _score_test_result(case, test_result)
-        passed, reason = _score_case(case, run_result.status, test_result)
+        verifier_passed, verifier_reason = _score_verifier_result(
+            case,
+            verifier_result,
+        )
+        passed, reason = _score_case(
+            case,
+            run_result.status,
+            test_result,
+            verifier_result,
+        )
         _append_test_result_event(
             trace_path=run_result.trace_path,
             run_id=run_result.run_id,
@@ -188,6 +217,15 @@ def run_eval_cases(
             passed=test_passed,
             reason=test_reason,
         )
+        if case.verifier is not None and verifier_result is not None:
+            _append_verifier_result_event(
+                trace_path=run_result.trace_path,
+                run_id=run_result.run_id,
+                case=case,
+                verifier_result=verifier_result,
+                passed=verifier_passed,
+                reason=verifier_reason,
+            )
         trace_summary = summarize_trace(run_result.trace_path)
         metrics = _metrics_from_summary(trace_summary)
         tool_counts = _tool_counts_from_summary(trace_summary)
@@ -212,6 +250,19 @@ def run_eval_cases(
                 test_timed_out=test_result.timed_out,
                 test_duration_seconds=test_result.duration_seconds,
                 test_passed=test_passed,
+                verifier_command=case.verifier or "",
+                verifier_returncode=(
+                    verifier_result.returncode if verifier_result else None
+                ),
+                verifier_stdout=verifier_result.stdout if verifier_result else "",
+                verifier_stderr=verifier_result.stderr if verifier_result else "",
+                verifier_timed_out=(
+                    verifier_result.timed_out if verifier_result else False
+                ),
+                verifier_duration_seconds=(
+                    verifier_result.duration_seconds if verifier_result else 0.0
+                ),
+                verifier_passed=verifier_passed,
                 failure_category=_failure_category_from_summary(trace_summary),
                 metrics=metrics,
                 trace_summary=trace_summary,
@@ -255,6 +306,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     failed = total - passed
     task_successes = sum(1 for result in results if result.runner_status == "success")
     test_passes = sum(1 for result in results if result.test_passed)
+    verifier_passes = sum(1 for result in results if result.verifier_passed)
     avg_tool_calls = _average_metric(results, "average_tool_calls")
     repeated_reads = _sum_metric(results, "repeated_read_count")
     invalid_tool_calls = _sum_metric(results, "invalid_tool_call_count")
@@ -277,6 +329,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         "| --- | --- |",
         f"| Task success rate | {_format_rate(task_successes, total)} |",
         f"| Test pass rate | {_format_rate(test_passes, total)} |",
+        f"| Verifier pass rate | {_format_rate(verifier_passes, total)} |",
         f"| Avg tool calls | {_format_number(avg_tool_calls)} |",
         f"| Repeated reads | {repeated_reads} |",
         f"| Invalid tool calls | {invalid_tool_calls} |",
@@ -289,8 +342,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         "",
         "## Runs",
         "",
-        "| Case | Result | Agent | Test | Failure | Workspace | Run | Tools |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Case | Result | Agent | Test | Verifier | Failure | Workspace | Run | Tools |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for result in results:
@@ -300,6 +353,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
             if result.test_timed_out
             else f"rc={result.test_returncode}"
         )
+        verifier_status = _verifier_status(result)
         lines.append(
             "| "
             + " | ".join(
@@ -308,6 +362,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     status,
                     _md_cell(result.runner_status),
                     _md_cell(test_status),
+                    _md_cell(verifier_status),
                     _md_cell(result.failure_category),
                     _md_cell(str(result.workspace_path)),
                     _md_cell(f"{result.run_id}<br>{result.trace_path}"),
@@ -330,11 +385,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 f"- CWD: `{result.cwd}`",
                 f"- Workspace: `{result.workspace_path}`",
                 f"- Test command: `{result.test_command}`",
+                f"- Verifier: `{result.verifier_command or '-'}`",
                 f"- Reason: {result.reason}",
                 f"- Failure category: `{result.failure_category}`",
                 f"- Replay metrics: {_inline(_format_metrics(result.metrics))}",
                 f"- Trace: `{result.trace_path}`",
-                f"- Duration: {result.test_duration_seconds:.2f}s",
+                f"- Test duration: {result.test_duration_seconds:.2f}s",
+                f"- Verifier duration: {result.verifier_duration_seconds:.2f}s",
             ]
         )
         output = _clip(
@@ -358,8 +415,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Task success | Test pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -370,6 +427,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
             1 for result in results if result.runner_status == "success"
         )
         test_passes = sum(1 for result in results if result.test_passed)
+        verifier_passes = sum(1 for result in results if result.verifier_passed)
         failure_breakdown = Counter(result.failure_category for result in results)
         lines.append(
             "| "
@@ -381,6 +439,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     _format_rate(passed, total),
                     _format_rate(task_successes, total),
                     _format_rate(test_passes, total),
+                    _format_rate(verifier_passes, total),
                     _format_number(_average_metric(results, "average_tool_calls")),
                     str(_sum_metric(results, "repeated_read_count")),
                     str(_sum_metric(results, "invalid_tool_call_count")),
@@ -427,8 +486,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 "",
                 f"### {profile_result.profile_name}",
                 "",
-                "| Case | Result | Agent | Test | Failure | Trace | Tools |",
-                "| --- | --- | --- | --- | --- | --- | --- |",
+                "| Case | Result | Agent | Test | Verifier | Failure | Trace | Tools |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for result in profile_result.results:
@@ -438,6 +497,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 if result.test_timed_out
                 else f"rc={result.test_returncode}"
             )
+            verifier_status = _verifier_status(result)
             lines.append(
                 "| "
                 + " | ".join(
@@ -446,6 +506,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         status,
                         _md_cell(result.runner_status),
                         _md_cell(test_status),
+                        _md_cell(verifier_status),
                         _md_cell(result.failure_category),
                         _md_cell(str(result.trace_path)),
                         _md_cell(_format_tool_counts(result.tool_counts)),
@@ -509,6 +570,33 @@ def _append_test_result_event(
         handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def _append_verifier_result_event(
+    *,
+    trace_path: Path,
+    run_id: str,
+    case: EvalCase,
+    verifier_result: "_CommandResult",
+    passed: bool,
+    reason: str,
+) -> None:
+    event = {
+        "type": "verifier_result",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "case_id": case.id,
+        "command": case.verifier,
+        "passed": passed,
+        "reason": reason,
+        "returncode": verifier_result.returncode,
+        "stdout": _clip(verifier_result.stdout, 4000),
+        "stderr": _clip(verifier_result.stderr, 4000),
+        "timed_out": verifier_result.timed_out,
+        "duration_seconds": verifier_result.duration_seconds,
+    }
+    with Path(trace_path).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 @dataclass(slots=True)
 class _CommandResult:
     returncode: int | None
@@ -519,14 +607,24 @@ class _CommandResult:
 
 
 def _run_test_command(case: EvalCase, cwd: Path) -> _CommandResult:
+    return _run_command_for_eval(case.test_command, cwd, case.timeout)
+
+
+def _run_verifier(case: EvalCase, cwd: Path) -> _CommandResult | None:
+    if case.verifier is None:
+        return None
+    return _run_command_for_eval(case.verifier, cwd, case.timeout)
+
+
+def _run_command_for_eval(command: str, cwd: Path, timeout: int) -> _CommandResult:
     started = time.monotonic()
     try:
-        parts = shlex.split(case.test_command)
+        parts = shlex.split(command)
     except ValueError as exc:
         return _CommandResult(
             returncode=None,
             stdout="",
-            stderr=f"could not parse test_command: {exc}",
+            stderr=f"could not parse command: {exc}",
             timed_out=False,
             duration_seconds=time.monotonic() - started,
         )
@@ -535,7 +633,7 @@ def _run_test_command(case: EvalCase, cwd: Path) -> _CommandResult:
         return _CommandResult(
             returncode=None,
             stdout="",
-            stderr="test_command parsed to no arguments",
+            stderr="command parsed to no arguments",
             timed_out=False,
             duration_seconds=time.monotonic() - started,
         )
@@ -547,7 +645,7 @@ def _run_test_command(case: EvalCase, cwd: Path) -> _CommandResult:
             cwd=cwd,
             text=True,
             capture_output=True,
-            timeout=case.timeout,
+            timeout=timeout,
             check=False,
             env=env,
         )
@@ -565,7 +663,7 @@ def _run_test_command(case: EvalCase, cwd: Path) -> _CommandResult:
         return _CommandResult(
             returncode=None,
             stdout=stdout,
-            stderr=stderr or f"test_command timed out after {case.timeout}s",
+            stderr=stderr or f"command timed out after {timeout}s",
             timed_out=True,
             duration_seconds=time.monotonic() - started,
         )
@@ -583,6 +681,7 @@ def _score_case(
     case: EvalCase,
     runner_status: str,
     test_result: _CommandResult,
+    verifier_result: _CommandResult | None,
 ) -> tuple[bool, str]:
     reasons: list[str] = []
     if runner_status != "success":
@@ -591,6 +690,10 @@ def _score_case(
     test_passed, test_reason = _score_test_result(case, test_result)
     if not test_passed:
         reasons.append(test_reason)
+
+    verifier_passed, verifier_reason = _score_verifier_result(case, verifier_result)
+    if not verifier_passed:
+        reasons.append(verifier_reason)
 
     if reasons:
         return False, "; ".join(reasons)
@@ -627,6 +730,21 @@ def _score_test_result(
     if reasons:
         return False, "; ".join(reasons)
     return True, "success criteria matched"
+
+
+def _score_verifier_result(
+    case: EvalCase,
+    verifier_result: _CommandResult | None,
+) -> tuple[bool, str]:
+    if case.verifier is None:
+        return True, "no verifier configured"
+    if verifier_result is None:
+        return False, "verifier did not run"
+    if verifier_result.timed_out:
+        return False, f"verifier timed out after {case.timeout}s"
+    if verifier_result.returncode != 0:
+        return False, f"verifier expected return code 0, got {verifier_result.returncode}"
+    return True, "verifier matched"
 
 
 def _build_model(provider: str) -> ModelAdapter:
@@ -721,6 +839,26 @@ def _optional_str(
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"eval case field {key!r} must be a non-empty string")
     return value
+
+
+def _optional_str_tuple(
+    record: dict[str, Any],
+    key: str,
+    default: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    value = record.get(key, default)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"eval case field {key!r} must be a non-empty string list")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"eval case field {key!r} must contain non-empty strings")
+        if item in items:
+            raise ValueError(f"eval case field {key!r} contains duplicate tool: {item}")
+        items.append(item)
+    return tuple(items)
 
 
 def _required_int(record: dict[str, Any], key: str) -> int:
@@ -883,6 +1021,14 @@ def _format_tool_counts(counts: dict[str, int]) -> str:
     if not counts:
         return "-"
     return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+
+
+def _verifier_status(result: EvalResult) -> str:
+    if not result.verifier_command:
+        return "-"
+    if result.verifier_timed_out:
+        return "timeout"
+    return f"rc={result.verifier_returncode}"
 
 
 def _md_cell(value: str) -> str:

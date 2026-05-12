@@ -751,3 +751,39 @@ Interview angle:
 The differentiator is now visible: HarnessCoder is not just invoking a model to
 write code. It is measuring model behavior under the same tool policy, fixture
 setup, and replay metric pipeline.
+
+## 0.6.0 Milestone
+
+### 32. Greenfield Is Added As A Harnessed Capability, Not A Product Pivot
+
+Problem:
+0.5.0 could prove a real bugfix loop, but it could not create files from an
+empty fixture. That makes the answer to "can it write code from zero?" too weak.
+
+Decision:
+Add `write_file(path, content, overwrite=false)` and a greenfield eval case. The
+case starts from a fixture that only has a README, asks the model to create a
+small Python module and unittest file, then validates the result with both
+`python -m unittest discover` and a separate verifier command.
+
+Interview angle:
+This is a deliberately small greenfield slice. It proves file creation and
+verification without pretending to be a full app generator.
+
+### 33. Pico-Inspired Constraints, HarnessCoder-Style Evidence
+
+Problem:
+Pico has a useful benchmark style: fixture repo, allowed tools, step budget, and
+verifier. HarnessCoder should learn from that without losing its own identity as
+a trace/replay/eval-matrix runtime.
+
+Decision:
+Add `allowed_tools`, `step_budget`, and `verifier` to eval cases. Tool
+constraints are enforced by `ToolPolicy`, step budget maps to the agent loop
+limit, and verifier results are appended to the same trace as structured
+`verifier_result` events.
+
+Interview angle:
+The project can now say: "I borrowed the right benchmark contract ideas, but the
+core artifact is still HarnessCoder's event-sourced run trace and comparable
+matrix report."

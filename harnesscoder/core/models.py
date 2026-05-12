@@ -10,7 +10,14 @@ from typing import Any, Protocol
 from harnesscoder.core.state import AgentState, ModelAction
 
 
-MODEL_TOOL_NAMES = ("read_file", "search_code", "edit_file", "run_tests", "run_command")
+MODEL_TOOL_NAMES = (
+    "read_file",
+    "search_code",
+    "write_file",
+    "edit_file",
+    "run_tests",
+    "run_command",
+)
 
 
 class ModelAdapter(Protocol):
@@ -163,7 +170,7 @@ Allowed tool action:
 {
   "kind": "tool",
   "rationale": "why this tool call is the next useful step",
-  "tool_name": "read_file | search_code | edit_file | run_tests | run_command",
+  "tool_name": "read_file | search_code | write_file | edit_file | run_tests | run_command",
   "tool_args": {}
 }
 
@@ -177,14 +184,16 @@ Allowed finish action:
 Tool schemas:
 - read_file(path: string, offset: int = 0, limit: int = 200)
 - search_code(query: string, path: string = ".")
+- write_file(path: string, content: string, overwrite: boolean = false)
 - edit_file(path: string, old: string, new: string)
 - run_tests(cmd: string | null = null, timeout: int = 60)
 - run_command(cmd: string, timeout: int = 30)
 
-Use edit_file only for exact replacements where old is expected to match once.
-Prefer run_tests for local python/pytest/unittest test execution. Reserve
-run_command for repository inspection and other policy-allowed commands. The
-policy layer may deny unsafe commands.
+Use write_file for new files in greenfield tasks. Use edit_file only for exact
+replacements where old is expected to match once. Prefer run_tests for local
+python/pytest/unittest test execution. Reserve run_command for repository
+inspection and other policy-allowed commands. The policy layer may deny unsafe
+commands.
 Answer in the user's language when finishing."""
 
 

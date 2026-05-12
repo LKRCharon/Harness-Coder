@@ -52,12 +52,14 @@ def summarize_trace(path: str | Path) -> JsonRecord:
     policy_denials = _policy_denials(records)
     failed_tools = _failed_tools(records)
     test_result = _test_result(records)
+    verifier_result = _verifier_result(records)
     metrics = _metrics_summary(
         records=records,
         tool_stats=tool_stats,
         policy_denials=policy_denials,
         failed_tools=failed_tools,
         test_result=test_result,
+        verifier_result=verifier_result,
         status=status,
         state=state,
     )
@@ -78,6 +80,7 @@ def summarize_trace(path: str | Path) -> JsonRecord:
         "metrics": metrics,
         "failure_category": metrics["failure_category"],
         "test_result": test_result,
+        "verifier_result": verifier_result,
         "policy_denials": policy_denials,
         "failed_tools": failed_tools,
         "modified_files": _modified_files(records),
@@ -199,6 +202,7 @@ def _metrics_summary(
     policy_denials: list[JsonRecord],
     failed_tools: list[JsonRecord],
     test_result: JsonRecord | None,
+    verifier_result: JsonRecord | None,
     status: str,
     state: JsonRecord,
 ) -> JsonRecord:
@@ -216,8 +220,10 @@ def _metrics_summary(
         "run_resumed_count": _event_count(records, "run_resumed")
         + _event_count(records, "resume_started"),
         "test_result_count": _event_count(records, "test_result"),
+        "verifier_result_count": _event_count(records, "verifier_result"),
         "resume_success_rate": _resume_success_rate(records, status),
         "test_passed": _test_passed(test_result),
+        "verifier_passed": _test_passed(verifier_result),
     }
     metrics["failure_category"] = _failure_category(
         status=status,
@@ -375,7 +381,13 @@ def _failure_category(
         return "incomplete"
     if status == "model_error" or _last_event(records, "model_error") is not None:
         return "model_error"
-    if status in {"success", "finished"} and metrics.get("test_passed") is not False:
+    if metrics.get("verifier_passed") is False:
+        return "verifier_failed"
+    if (
+        status in {"success", "finished"}
+        and metrics.get("test_passed") is not False
+        and metrics.get("verifier_passed") is not False
+    ):
         return "success"
     if metrics.get("test_passed") is False:
         return "test_failed"
@@ -515,8 +527,19 @@ def _tool_result(record: JsonRecord) -> JsonRecord | None:
 
 
 def _test_result(records: list[JsonRecord]) -> JsonRecord | None:
+    return _last_structured_result(records, "test_result")
+
+
+def _verifier_result(records: list[JsonRecord]) -> JsonRecord | None:
+    return _last_structured_result(records, "verifier_result")
+
+
+def _last_structured_result(
+    records: list[JsonRecord],
+    event_type: str,
+) -> JsonRecord | None:
     for index, record in reversed(list(enumerate(records))):
-        if record.get("type") != "test_result":
+        if record.get("type") != event_type:
             continue
         payload = record.get("result")
         if not isinstance(payload, dict):
@@ -546,7 +569,7 @@ def _modified_files(records: list[JsonRecord]) -> list[str]:
                     files.append(file_path)
                     seen.add(file_path)
         result = _tool_result(record)
-        if result is None or result.get("tool_name") != "edit_file":
+        if result is None or result.get("tool_name") not in {"edit_file", "write_file"}:
             continue
         metadata = result.get("metadata")
         if not isinstance(metadata, dict) or metadata.get("changed") is not True:

@@ -276,7 +276,7 @@ class AgentState:
         return snapshot
 
     def _record_modified_file(self, observation: ToolObservation) -> None:
-        if observation.tool_name != "edit_file" or not observation.ok:
+        if observation.tool_name not in {"edit_file", "write_file"} or not observation.ok:
             return
         if observation.metadata.get("changed") is not True:
             return
@@ -291,7 +291,7 @@ class AgentState:
         if observation.tool_name in {"read_file", "search_code"}:
             self.phase = "explore"
         elif (
-            observation.tool_name == "edit_file"
+            observation.tool_name in {"edit_file", "write_file"}
             and observation.metadata.get("changed") is True
         ):
             self.phase = "edit"
@@ -306,7 +306,7 @@ class AgentState:
                 self.file_summaries[path] = _summarize_read_observation(observation)
 
         if (
-            observation.tool_name == "edit_file"
+            observation.tool_name in {"edit_file", "write_file"}
             and observation.ok
             and observation.metadata.get("changed") is True
         ):

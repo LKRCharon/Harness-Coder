@@ -20,14 +20,15 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.5.0` is a runnable local runtime with a real bugfix eval loop,
-trace replay, eval reporting, model-profile comparison, context governance, and
-checkpoint/resume support. It includes:
+Version `0.6.0` is a runnable local runtime with real bugfix and minimal
+greenfield eval loops, trace replay, eval reporting, model-profile comparison,
+context governance, and checkpoint/resume support. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
   - `read_file(path, offset=0, limit=200)`
   - `search_code(query, path=".")`
+  - `write_file(path, content, overwrite=false)`
   - `edit_file(path, old, new)`
   - `run_tests(cmd=None, timeout=60)`
   - `run_command(cmd, timeout=30)`
@@ -40,6 +41,10 @@ checkpoint/resume support. It includes:
   renders a Markdown report.
 - Fixture-backed bugfix evals that copy a repo into
   `.harnesscoder/eval-workspaces/...` before editing it.
+- A greenfield eval that starts from a nearly empty fixture and creates source
+  plus tests from scratch.
+- Case-level `allowed_tools`, `step_budget`, and `verifier` fields inspired by
+  benchmark harnesses such as Pico.
 - Model profiles and Markdown eval matrices for comparing the same cases across
   providers.
 - CLI entrypoints:
@@ -186,6 +191,22 @@ python -m harnesscoder \
 eval runner copies it into an isolated `.harnesscoder/eval-workspaces/...`
 workspace before the agent edits files, so demo fixtures remain stable.
 
+Run the minimal greenfield loop:
+
+```bash
+python -m harnesscoder \
+  --provider openai-codex \
+  --eval eval/greenfield_cases.json \
+  --max-iterations 10 \
+  --eval-report .harnesscoder/reports/greenfield-demo.md
+```
+
+`eval/greenfield_cases.json` starts from `examples/greenfield_demo/repo`, which
+contains no application code. The agent must create `math_utils.py` and
+`test_math_utils.py`, pass `python -m unittest discover`, and pass a separate
+verifier command. The case also declares `allowed_tools` and `step_budget`, so
+the eval contract is explicit instead of hidden in prose.
+
 Compare profiles with an eval matrix:
 
 ```bash
@@ -200,9 +221,10 @@ python -m harnesscoder \
   --eval-report .harnesscoder/reports/bugfix-matrix.md
 ```
 
-The matrix report compares pass rate, test pass rate, average tool calls,
-repeated reads, invalid calls, policy denials, tool failures, and failure
-categories. Each profile/case run still keeps its own trace.
+The matrix report compares pass rate, test pass rate, verifier pass rate,
+average tool calls, repeated reads, invalid calls, policy denials, tool
+failures, and failure categories. Each profile/case run still keeps its own
+trace.
 
 Near-term TODOs:
 

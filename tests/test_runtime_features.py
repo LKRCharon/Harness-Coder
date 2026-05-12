@@ -12,6 +12,35 @@ from harnesscoder.replay import reconstruct_state_from_trace, summarize_trace
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_write_file_creates_new_file_and_blocks_accidental_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = ToolRegistry(root)
+
+            created = registry.write_file(
+                call_id="call_create",
+                path="pkg/module.py",
+                content="VALUE = 1\n",
+            )
+            duplicate = registry.write_file(
+                call_id="call_duplicate",
+                path="pkg/module.py",
+                content="VALUE = 2\n",
+            )
+            overwritten = registry.write_file(
+                call_id="call_overwrite",
+                path="pkg/module.py",
+                content="VALUE = 2\n",
+                overwrite=True,
+            )
+
+            self.assertTrue(created.ok, created.error)
+            self.assertTrue(created.metadata["created"])
+            self.assertFalse(duplicate.ok)
+            self.assertTrue(overwritten.ok, overwritten.error)
+            self.assertFalse(overwritten.metadata["created"])
+            self.assertEqual((root / "pkg" / "module.py").read_text(), "VALUE = 2\n")
+
     def test_edit_file_requires_unique_old_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -59,6 +88,20 @@ class ToolRegistryTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_allowed_tools_can_scope_a_run(self) -> None:
+        policy = ToolPolicy(allowed_tools={"read_file"})
+        root = Path.cwd()
+
+        allowed = policy.check("read_file", {"path": "README.md"}, root)
+        denied = policy.check(
+            "write_file",
+            {"path": "new.py", "content": "print('hi')\n"},
+            root,
+        )
+
+        self.assertTrue(allowed.allowed, allowed.reason)
+        self.assertFalse(denied.allowed)
+
     def test_run_tests_policy_is_narrower_than_run_command(self) -> None:
         policy = ToolPolicy()
         root = Path.cwd()

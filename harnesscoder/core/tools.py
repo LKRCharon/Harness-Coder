@@ -45,6 +45,7 @@ class ToolRegistry:
         self._tools: dict[str, ToolFn] = {
             "read_file": self.read_file,
             "search_code": self.search_code,
+            "write_file": self.write_file,
             "edit_file": self.edit_file,
             "run_tests": self.run_tests,
             "run_command": self.run_command,
@@ -292,6 +293,120 @@ class ToolRegistry:
             ok=True,
             output=f"Replaced 1 occurrence in {rel_path}.",
             metadata=metadata,
+        )
+
+    def write_file(
+        self,
+        call_id: str,
+        path: str,
+        content: str,
+        overwrite: bool = False,
+    ) -> ToolResult:
+        tool_name = "write_file"
+        if not isinstance(path, str) or not path.strip():
+            return ToolResult(call_id, tool_name, False, "", "path must be a non-empty string")
+        if not isinstance(content, str):
+            return ToolResult(call_id, tool_name, False, "", "content must be a string")
+        if not isinstance(overwrite, bool):
+            return ToolResult(call_id, tool_name, False, "", "overwrite must be a boolean")
+
+        try:
+            target = self._resolve_workspace_path(path)
+        except ValueError as exc:
+            return ToolResult(call_id, tool_name, False, "", str(exc))
+
+        rel_path = str(target.relative_to(self.cwd))
+        if target.exists() and target.is_dir():
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"path is a directory: {path}",
+                metadata={"path": rel_path, "changed": False, "created": False},
+            )
+        if target.exists() and not overwrite:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"file already exists: {path}",
+                metadata={"path": rel_path, "changed": False, "created": False},
+            )
+
+        previous_text: str | None = None
+        if target.exists():
+            try:
+                previous_text = target.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                return ToolResult(
+                    call_id,
+                    tool_name,
+                    False,
+                    "",
+                    f"existing file is not valid UTF-8: {exc}",
+                    metadata={"path": rel_path, "changed": False, "created": False},
+                )
+            except OSError as exc:
+                return ToolResult(
+                    call_id,
+                    tool_name,
+                    False,
+                    "",
+                    f"could not read existing file: {exc}",
+                    metadata={"path": rel_path, "changed": False, "created": False},
+                )
+
+        created = previous_text is None
+        changed = previous_text != content
+        if not changed:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                ok=True,
+                output=f"No changes made to {rel_path}: content is identical.",
+                metadata={
+                    "path": rel_path,
+                    "changed": False,
+                    "created": False,
+                    "overwrite": overwrite,
+                    "content_length": len(content),
+                },
+            )
+
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"could not write file: {exc}",
+                metadata={
+                    "path": rel_path,
+                    "changed": False,
+                    "created": False,
+                    "overwrite": overwrite,
+                    "content_length": len(content),
+                },
+            )
+
+        action = "Created" if created else "Overwrote"
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            ok=True,
+            output=f"{action} {rel_path} ({len(content)} chars).",
+            metadata={
+                "path": rel_path,
+                "changed": True,
+                "created": created,
+                "overwrite": overwrite,
+                "content_length": len(content),
+            },
         )
 
     def run_tests(
