@@ -20,10 +20,10 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.7.0` is a runnable local runtime with real bugfix and minimal
+Version `0.7.1` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
-model-profile comparison, context governance, and checkpoint/resume support. It
-includes:
+model-profile comparison, context governance, checkpoint/resume support, and a
+lightweight TUI with live refresh. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -74,7 +74,9 @@ python -m harnesscoder --tui
 ```
 
 Inside the TUI, send a normal message to run the agent and write a new trace.
-Use slash commands for direct tools and runtime controls:
+The UI keeps refreshing while a run is active, shows the latest trace event in
+the status area, and folds the header on narrow or short terminals. Use slash
+commands for direct tools and runtime controls:
 
 ```text
 /help
@@ -91,8 +93,8 @@ Use slash commands for direct tools and runtime controls:
 /trace latest
 ```
 
-The current TUI is intentionally small: it is a runnable scaffold for the final
-interactive spec, not a full Claude Code clone.
+The current TUI is intentionally small: it is a runnable control surface for the
+runtime and eval harness, not a full Claude Code clone.
 
 ## OpenAI-Compatible Codex Provider
 

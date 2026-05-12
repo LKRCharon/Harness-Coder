@@ -4,7 +4,9 @@ import curses
 import json
 import os
 import shlex
+import threading
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -12,7 +14,7 @@ from uuid import uuid4
 
 from harnesscoder.core.models import HCBenchOracleModel, OpenAICodexModel, ScriptedModel
 from harnesscoder.core.policy import ToolPolicy
-from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.runner import AgentRunner, RunResult
 from harnesscoder.core.tools import ToolRegistry
 
 
@@ -36,6 +38,19 @@ class Message:
     text: str
 
 
+@dataclass(slots=True)
+class ActiveRun:
+    prompt: str
+    config: TuiConfig
+    started_at: float
+    known_traces: set[Path]
+    thread: threading.Thread | None = None
+    result: RunResult | None = None
+    error: str | None = None
+    done: bool = False
+    trace_path: Path | None = None
+
+
 class HarnessCoderTui:
     def __init__(self, config: TuiConfig, initial_message: str | None = None) -> None:
         self.config = config
@@ -51,6 +66,9 @@ class HarnessCoderTui:
         self.status = "ready"
         self.last_trace_path: Path | None = None
         self._colors: dict[str, int] = {}
+        self._active_run: ActiveRun | None = None
+        self._active_lock = threading.Lock()
+        self._spinner_index = 0
 
     def run(self) -> int:
         return curses.wrapper(self._main)
@@ -61,17 +79,24 @@ class HarnessCoderTui:
         except curses.error:
             pass
         screen.keypad(True)
+        screen.timeout(100)
         self._init_colors()
 
         if self.initial_message:
-            self._handle_user_message(self.initial_message, screen)
+            self._start_user_message(self.initial_message)
 
         while True:
+            self._poll_active_run()
             self._draw(screen)
             try:
                 key = screen.get_wch()
             except KeyboardInterrupt:
                 return 0
+            except curses.error:
+                continue
+
+            if key == curses.KEY_RESIZE:
+                continue
 
             if key in ("\n", "\r") or key == curses.KEY_ENTER:
                 line = self.input_buffer.strip()
@@ -83,7 +108,7 @@ class HarnessCoderTui:
                 if line.startswith("/"):
                     self._handle_slash_command(line, screen)
                 else:
-                    self._handle_user_message(line, screen)
+                    self._start_user_message(line)
                 continue
 
             if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
@@ -117,25 +142,42 @@ class HarnessCoderTui:
         screen.erase()
         height, width = screen.getmaxyx()
         width = max(width, 20)
-        body_height = max(1, height - 7)
+        if height < 6:
+            self._draw_compact(screen, height, width)
+            screen.refresh()
+            return
 
-        self._draw_header(screen, width)
+        header_height = self._draw_header(screen, height, width)
+        footer_height = 3
+        body_start = header_height
+        body_end = max(body_start, height - footer_height)
+        body_height = max(1, body_end - body_start)
 
         body_lines = self._render_messages(width - 2)
         visible = body_lines[-body_height:]
-        for row, (line, color_name) in enumerate(visible, start=4):
-            if row >= height - 3:
+        for row, (line, color_name) in enumerate(visible, start=body_start):
+            if row >= body_end:
                 break
             self._safe_addstr(screen, row, 1, line[: width - 2], color_name)
 
         divider = "-" * (width - 1)
         self._safe_addstr(screen, height - 3, 0, divider, "muted")
         prompt = "> " + self.input_buffer
+        if self._active_run:
+            prompt = "(running) " + prompt
         self._safe_addstr(screen, height - 2, 0, prompt[: width - 1], "user")
-        self._safe_addstr(screen, height - 1, 0, self.status[: width - 1], "muted")
+        self._safe_addstr(screen, height - 1, 0, self._footer_status()[: width - 1], "muted")
         screen.refresh()
 
-    def _draw_header(self, screen: curses.window, width: int) -> None:
+    def _draw_compact(self, screen: curses.window, height: int, width: int) -> None:
+        lines = [
+            ("HC " + self._footer_status(), "title"),
+            ("> " + self.input_buffer, "user"),
+        ]
+        for row, (line, color_name) in enumerate(lines[:height]):
+            self._safe_addstr(screen, row, 0, line[: width - 1], color_name)
+
+    def _draw_header(self, screen: curses.window, height: int, width: int) -> int:
         title = " HarnessCoder TUI "
         top = "+" + title.center(max(0, width - 2), "-") + "+"
         self._safe_addstr(screen, 0, 0, top[:width], "title")
@@ -146,11 +188,24 @@ class HarnessCoderTui:
             f" provider={self.config.provider} model={model} "
             f"iters={self.config.max_iterations}"
         )
+        if height <= 9:
+            compact = f"{meta.strip()} cwd={cwd}"
+            self._safe_addstr(screen, 1, 1, compact[: max(1, width - 2)], "muted")
+            return 2
+
         self._safe_addstr(screen, 1, 1, meta[: max(1, width - 2)], "muted")
         self._safe_addstr(screen, 2, 1, f" cwd={cwd}"[: max(1, width - 2)], "muted")
 
-        diagram = "[message] -> [model] -> [policy] -> [tools] -> [trace]"
+        if width >= 64:
+            diagram = "[message] -> [model] -> [policy] -> [tools] -> [trace]"
+        else:
+            diagram = "msg -> model -> policy -> tools -> trace"
         self._safe_addstr(screen, 3, 1, diagram[: max(1, width - 2)], "title")
+        if self._active_run:
+            live = self._active_run_line()
+            self._safe_addstr(screen, 4, 1, live[: max(1, width - 2)], "tool")
+            return 5
+        return 4
 
     def _render_messages(self, width: int) -> list[tuple[str, str]]:
         rendered: list[tuple[str, str]] = []
@@ -201,23 +256,80 @@ class HarnessCoderTui:
         except curses.error:
             pass
 
-    def _handle_user_message(self, line: str, screen: curses.window) -> None:
-        self.messages.append(Message("user", line))
-        self.status = "running agent..."
-        self._draw(screen)
+    def _start_user_message(self, line: str) -> None:
+        if self._active_run is not None:
+            self.messages.append(
+                Message("error", "Agent is still running. Wait for it to finish.")
+            )
+            return
 
+        self.messages.append(Message("user", line))
+        config = self._snapshot_config()
+        active = ActiveRun(
+            prompt=line,
+            config=config,
+            started_at=time.monotonic(),
+            known_traces=self._existing_trace_paths(config),
+        )
+        active.thread = threading.Thread(
+            target=self._run_agent_background,
+            args=(active,),
+            name="harnesscoder-tui-run",
+            daemon=True,
+        )
+        self._active_run = active
+        self.status = "agent running..."
+        active.thread.start()
+
+    def _run_agent_background(self, active: ActiveRun) -> None:
         try:
-            model = self._build_model()
+            model = self._build_model(active.config)
             runner = AgentRunner(
                 model=model,
-                cwd=self.config.cwd,
-                trace_root=self.config.trace_root,
-                max_iterations=self.config.max_iterations,
+                cwd=active.config.cwd,
+                trace_root=active.config.trace_root,
+                max_iterations=active.config.max_iterations,
             )
-            result = runner.run(line)
+            result = runner.run(active.prompt)
         except Exception as exc:
+            with self._active_lock:
+                active.error = f"{type(exc).__name__}: {exc}"
+                active.done = True
+            return
+
+        with self._active_lock:
+            active.result = result
+            active.trace_path = result.trace_path
+            active.done = True
+
+    def _poll_active_run(self) -> None:
+        active = self._active_run
+        if active is None:
+            return
+
+        self._spinner_index = (self._spinner_index + 1) % 4
+        if active.trace_path is None:
+            active.trace_path = self._discover_active_trace(active)
+
+        with self._active_lock:
+            done = active.done
+            error = active.error
+            result = active.result
+
+        if not done:
+            self.status = self._active_run_line()
+            return
+
+        if error is not None:
             self.status = "agent failed"
-            self.messages.append(Message("error", f"{type(exc).__name__}: {exc}"))
+            self.messages.append(Message("error", error))
+            self._active_run = None
+            return
+
+        if result is None:
+            self.status = "agent failed"
+            self.messages.append(Message("error", "agent finished without a result"))
+            self._active_run = None
             return
 
         self.status = f"run {result.run_id}: {result.status}"
@@ -228,6 +340,50 @@ class HarnessCoderTui:
             f"trace: {result.trace_path}"
         )
         self.messages.append(Message("assistant", reply))
+        self._active_run = None
+
+    def _snapshot_config(self) -> TuiConfig:
+        return TuiConfig(
+            cwd=self.config.cwd,
+            trace_root=self.config.trace_root,
+            provider=self.config.provider,
+            openai_base_url=self.config.openai_base_url,
+            openai_model=self.config.openai_model,
+            openai_api_key_env=self.config.openai_api_key_env,
+            max_iterations=self.config.max_iterations,
+        )
+
+    def _existing_trace_paths(self, config: TuiConfig) -> set[Path]:
+        root = self._trace_root_path(config)
+        return {path.resolve() for path in root.glob("*/trace.jsonl")}
+
+    def _discover_active_trace(self, active: ActiveRun) -> Path | None:
+        root = self._trace_root_path(active.config)
+        traces = sorted(
+            root.glob("*/trace.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for path in traces:
+            resolved = path.resolve()
+            if resolved not in active.known_traces:
+                return resolved
+        return None
+
+    def _active_run_line(self) -> str:
+        active = self._active_run
+        if active is None:
+            return self.status
+        spinner = "|/-\\"[self._spinner_index]
+        elapsed = time.monotonic() - active.started_at
+        event = self._latest_trace_event_label(active.trace_path)
+        trace = active.trace_path.parent.name if active.trace_path else "starting trace"
+        return f"{spinner} running {elapsed:0.1f}s | {trace} | {event}"
+
+    def _footer_status(self) -> str:
+        if self._active_run:
+            return self._active_run_line()
+        return self.status
 
     def _handle_slash_command(self, line: str, screen: curses.window) -> None:
         try:
@@ -511,10 +667,59 @@ class HarnessCoderTui:
 
         raise ValueError(f"trace not found: {value}")
 
-    def _trace_root_path(self) -> Path:
-        if self.config.trace_root.is_absolute():
-            return self.config.trace_root
-        return (self.config.cwd / self.config.trace_root).resolve()
+    def _trace_root_path(self, config: TuiConfig | None = None) -> Path:
+        config = config or self.config
+        if config.trace_root.is_absolute():
+            return config.trace_root
+        return (config.cwd / config.trace_root).resolve()
+
+    def _latest_trace_event_label(self, trace_path: Path | None) -> str:
+        if trace_path is None or not trace_path.is_file():
+            return "waiting for run_started"
+        try:
+            last = self._read_last_trace_event(trace_path)
+        except Exception:
+            return "reading trace"
+        if last is None:
+            return "trace opened"
+
+        event_type = str(last.get("type", "<missing>"))
+        if event_type == "model_action":
+            action = last.get("action")
+            if isinstance(action, dict):
+                kind = action.get("kind", "-")
+                tool_name = action.get("tool_name") or ""
+                return f"model_action {kind} {tool_name}".strip()
+        if event_type in {"policy_decision", "test_result"}:
+            tool_name = last.get("tool_name") or last.get("command") or ""
+            return f"{event_type} {tool_name}".strip()
+        if event_type == "tool_result":
+            result = last.get("result")
+            if isinstance(result, dict):
+                tool_name = result.get("tool_name", "-")
+                ok = result.get("ok", "-")
+                return f"tool_result {tool_name} ok={ok}"
+        if event_type == "state_updated":
+            state = last.get("state")
+            if isinstance(state, dict):
+                phase = state.get("phase", "-")
+                iterations = state.get("iterations", "-")
+                return f"state_updated phase={phase} iter={iterations}"
+        if event_type == "run_finished":
+            return f"run_finished status={last.get('status', '-')}"
+        return event_type
+
+    def _read_last_trace_event(self, trace_path: Path) -> dict[str, object] | None:
+        last_line = ""
+        for line in trace_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip():
+                last_line = line
+        if not last_line:
+            return None
+        event = json.loads(last_line)
+        if not isinstance(event, dict):
+            return None
+        return event
 
     def _summarize_trace(self, trace_path: Path) -> str:
         counts: dict[str, int] = {}
@@ -557,23 +762,27 @@ class HarnessCoderTui:
                 lines.append(f"- {event_type}")
         return "\n".join(lines)
 
-    def _build_model(self) -> ScriptedModel | HCBenchOracleModel | OpenAICodexModel:
-        if self.config.provider == "scripted":
+    def _build_model(
+        self,
+        config: TuiConfig | None = None,
+    ) -> ScriptedModel | HCBenchOracleModel | OpenAICodexModel:
+        config = config or self.config
+        if config.provider == "scripted":
             return ScriptedModel()
-        if self.config.provider == "hc-bench-oracle":
+        if config.provider == "hc-bench-oracle":
             return HCBenchOracleModel()
 
-        api_key = os.environ.get(self.config.openai_api_key_env)
+        api_key = os.environ.get(config.openai_api_key_env)
         if not api_key:
             raise ValueError(
-                f"{self.config.openai_api_key_env} is required for openai-codex"
+                f"{config.openai_api_key_env} is required for openai-codex"
             )
-        if not self.config.openai_model:
+        if not config.openai_model:
             raise ValueError("A model name is required. Use /model <name>.")
         return OpenAICodexModel(
             api_key=api_key,
-            base_url=self.config.openai_base_url,
-            model=self.config.openai_model,
+            base_url=config.openai_base_url,
+            model=config.openai_model,
         )
 
 

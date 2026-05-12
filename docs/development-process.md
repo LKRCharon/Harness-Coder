@@ -837,3 +837,40 @@ Interview angle:
 This makes follow-up questions natural: "which models fail recovery tasks?",
 "does the agent over-read large files?", "are policy denials expected or
 regressions?"
+
+## 0.7.1 Milestone
+
+### 37. TUI Live Refresh Without Changing The Runtime Contract
+
+Problem:
+The 0.7.0 TUI could run the agent, but the screen blocked until the run
+finished. That made long tasks feel opaque even though the runtime was already
+writing useful trace events.
+
+Decision:
+Run each normal TUI message in a background thread, keep the curses loop
+refreshing every 100ms, and render a compact live status line from the newest
+trace event. The TUI now shows elapsed time, run id when available, and the
+latest lifecycle event such as `model_action`, `policy_decision`, `tool_result`,
+`state_updated`, or `run_finished`.
+
+Interview angle:
+This is a small but realistic agent-product detail: streaming UI does not need
+to change the agent loop. It can be built by observing the same event-sourced
+trace that powers replay and eval.
+
+### 38. Adaptive Terminal Rendering
+
+Problem:
+The original TUI assumed enough terminal height for a fixed four-line header.
+Small panes could squeeze the message area and make the interface feel brittle.
+
+Decision:
+Make the header return its actual height, collapse metadata into one line on
+short terminals, use a shorter pipeline label on narrow terminals, and fall back
+to a two-line compact mode for very small panes.
+
+Interview angle:
+The TUI remains standard-library only, but it behaves like a real terminal tool:
+the control surface adapts to the user's pane instead of requiring one perfect
+terminal size.
