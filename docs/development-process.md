@@ -268,13 +268,13 @@ Problem:
 OpenAI-compatible proxies differ on whether users configure:
 
 ```text
-https://api.dest.space
+https://your-openai-compatible-endpoint.example
 ```
 
 or:
 
 ```text
-https://api.dest.space/v1
+https://your-openai-compatible-endpoint.example/v1
 ```
 
 Fix:
@@ -316,7 +316,7 @@ Symptom:
 The first live request to:
 
 ```text
-https://api.dest.space
+https://your-openai-compatible-endpoint.example
 ```
 
 failed with DNS resolution inside the sandbox:
@@ -346,7 +346,7 @@ browser_signature_banned
 ```
 
 Root cause:
-The request reached `api.dest.space`, but Cloudflare blocked the default Python
+The request reached the OpenAI-compatible endpoint, but the edge layer blocked the default Python
 HTTP client signature.
 
 Fix:
@@ -390,7 +390,7 @@ Command:
 ```bash
 python -m harnesscoder \
   --provider openai-codex \
-  --openai-base-url https://api.dest.space \
+  --openai-base-url https://your-openai-compatible-endpoint.example \
   --openai-model gpt-5.5 \
   "看一下这个 repo 是做什么的"
 ```
@@ -478,7 +478,7 @@ Current commands include:
 /model gpt-5.5
 /model scripted
 /provider openai-codex
-/base-url https://api.dest.space
+/base-url https://your-openai-compatible-endpoint.example
 /read README.md
 /search HarnessCoder
 /run git status --short
@@ -874,3 +874,66 @@ Interview angle:
 The TUI remains standard-library only, but it behaves like a real terminal tool:
 the control surface adapts to the user's pane instead of requiring one perfect
 terminal size.
+
+## 0.8.3 Milestone
+
+### 39. Context Packs Now Reach The Live Model Prompt
+
+Problem:
+`context_packed` was useful trace evidence, but the real model adapter still
+received only a compact state view. That meant context governance was observable
+but not actually steering model input.
+
+Decision:
+Add a context assembly layer with `--context-mode none|pack|memory`. The
+assembly combines system instructions, task contract, packed context, recent
+observations, and available tools. `openai-codex` now builds its Responses API
+payload from this assembly, while scripted and oracle providers remain
+deterministic control arms.
+
+Interview angle:
+This turns context governance from "we logged a summary" into a measurable
+prompting strategy that can be ablated.
+
+### 40. Task-Local Memory Is Trace-Backed, Not Long-Term Memory
+
+Problem:
+A coding agent needs working memory during a task, but adding a broad memory
+platform would distract from the 1.0 harness story.
+
+Decision:
+Add task-local memory blocks:
+
+```text
+task/failing_tests
+task/explored_files
+task/relevant_symbols
+task/patch_summary
+task/verified_facts
+task/open_questions
+```
+
+The reducer updates these blocks from tool results, writes `memory_updated`
+events, and injects `<working_memory>...</working_memory>` only in
+`--context-mode memory`.
+
+Interview angle:
+The memory design is deliberately scoped. It is not a product claim about
+personal memory; it is a way to make one coding run easier to audit and
+optimize.
+
+### 41. Compression Metrics Are First-Class Eval Signals
+
+Problem:
+"Compression" can become hand-wavy if the harness only says it summarized
+context. The eval story needs concrete measurements.
+
+Decision:
+Replay and reports now expose estimated context tokens, compression count, hot
+observation count, cold summary chars, repeated reads, time to first edit,
+search-to-edit steps, and edit-to-test steps. Matrix reports include context
+injection, estimated tokens, memory updates, and compression counts by profile.
+
+Interview angle:
+This lets the project explain whether context governance changes behavior, not
+just whether a final answer passed.

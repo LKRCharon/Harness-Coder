@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from harnesscoder.core.policy import ToolPolicy
+from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.tools import ToolRegistry
 from harnesscoder.eval_runner import load_eval_cases, render_markdown_report
 from harnesscoder.replay import reconstruct_state_from_trace, summarize_trace
@@ -198,6 +200,50 @@ class EvalRunnerTests(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 1)
         report = render_markdown_report([])
         self.assertIn("# HarnessCoder Eval Report", report)
+
+
+class ContextMemoryRunnerTests(unittest.TestCase):
+    def test_runner_records_context_injection_and_memory_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n\nUseful fact.\n", encoding="utf-8")
+            runner = AgentRunner(
+                model=_ReadThenFinishModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=3,
+                context_mode="memory",
+            )
+
+            result = runner.run("Read the README.")
+            summary = summarize_trace(result.trace_path)
+            state = reconstruct_state_from_trace(result.trace_path)
+
+        self.assertEqual(result.status, "success")
+        metrics = summary["metrics"]
+        self.assertEqual(metrics["context_injected_count"], 2)
+        self.assertGreater(metrics["estimated_context_tokens"], 0)
+        self.assertEqual(metrics["memory_updated_count"], 1)
+        self.assertIn("task/explored_files", state["memory_blocks"])
+        self.assertIn("read README.md", state["memory_blocks"]["task/explored_files"]["value"])
+
+
+class _ReadThenFinishModel:
+    name = "read-then-finish"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.latest_observation_for("read_file") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Read the README.",
+                tool_name="read_file",
+                tool_args={"path": "README.md"},
+            )
+        return ModelAction(
+            kind="finish",
+            rationale="Enough context.",
+            content="done",
+        )
 
 
 if __name__ == "__main__":

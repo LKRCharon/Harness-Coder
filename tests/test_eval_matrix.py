@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from harnesscoder.cli import main
 from harnesscoder.eval_runner import render_markdown_matrix, run_eval_matrix
 from harnesscoder.model_profiles import (
     ModelProfile,
@@ -67,6 +68,46 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("scripted_a", report)
         self.assertIn("scripted_b", report)
         self.assertIn("bugfix-add-one", report)
+
+    def test_eval_matrix_records_profile_initialization_error(self) -> None:
+        matrix = run_eval_matrix(
+            cases_path=ROOT / "eval" / "bugfix_cases.json",
+            workspace_root=ROOT,
+            profiles=[
+                ModelProfile(
+                    name="real_missing_key",
+                    provider="openai-codex",
+                    model="codex-test",
+                    api_key_env="HARNESSCODER_TEST_MISSING_KEY",
+                ),
+            ],
+            max_iterations=1,
+        )
+
+        self.assertEqual(len(matrix), 1)
+        self.assertEqual(matrix[0].results, [])
+        self.assertIn("HARNESSCODER_TEST_MISSING_KEY", matrix[0].error or "")
+
+        report = render_markdown_matrix(matrix)
+        self.assertIn("Profile Errors", report)
+        self.assertIn("real_missing_key", report)
+        self.assertIn("profile_error=1", report)
+
+    def test_cli_matrix_returns_nonzero_for_profile_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "matrix.md"
+            code = main(
+                [
+                    "--model-profiles",
+                    "openai-codex",
+                    "--eval",
+                    str(ROOT / "eval" / "bugfix_cases.json"),
+                    "--eval-report",
+                    str(report_path),
+                ]
+            )
+
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

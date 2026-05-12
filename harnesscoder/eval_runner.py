@@ -19,6 +19,7 @@ from harnesscoder.core.models import (
     ScriptedModel,
 )
 from harnesscoder.core.policy import ToolPolicy
+from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
@@ -121,6 +122,7 @@ class EvalMatrixProfileResult:
     profile_name: str
     provider: str
     results: list[EvalResult]
+    error: str | None = None
 
 
 def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
@@ -184,6 +186,7 @@ def run_eval_cases(
     trace_root: str | Path = ".harnesscoder/eval-runs",
     max_iterations: int = 8,
     model: ModelAdapter | None = None,
+    context_mode: ContextMode = "none",
 ) -> list[EvalResult]:
     root = Path(workspace_root).resolve()
     resolved_cases_path = _resolve_cases_path(cases_path, root)
@@ -203,6 +206,7 @@ def run_eval_cases(
             cwd=case_cwd,
             trace_root=Path(trace_root),
             max_iterations=effective_max_iterations,
+            context_mode=context_mode,
             policy=ToolPolicy(set(case.allowed_tools) if case.allowed_tools else None),
         )
         run_result = runner.run(case.task)
@@ -290,16 +294,30 @@ def run_eval_matrix(
     *,
     trace_root: str | Path = ".harnesscoder/eval-runs",
     max_iterations: int = 8,
+    context_mode: ContextMode = "none",
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
     for profile in profiles:
+        try:
+            model = profile.build()
+        except Exception as exc:
+            matrix.append(
+                EvalMatrixProfileResult(
+                    profile_name=profile.name,
+                    provider=profile.provider,
+                    results=[],
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            continue
         results = run_eval_cases(
             cases_path=cases_path,
             workspace_root=workspace_root,
             provider=profile.provider,
             trace_root=trace_root,
             max_iterations=max_iterations,
-            model=profile.build(),
+            model=model,
+            context_mode=context_mode,
         )
         matrix.append(
             EvalMatrixProfileResult(
@@ -324,6 +342,15 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     policy_denials = _sum_metric(results, "policy_denial_count")
     tool_failures = _sum_metric(results, "failed_tool_count")
     context_packs = _sum_metric(results, "context_packed_count")
+    context_injections = _sum_metric(results, "context_injected_count")
+    estimated_context_tokens = _sum_metric(results, "estimated_context_tokens")
+    memory_updates = _sum_metric(results, "memory_updated_count")
+    compression_count = _sum_metric(results, "compression_count")
+    hot_observation_count = _sum_metric(results, "hot_observation_count")
+    cold_summary_chars = _sum_metric(results, "cold_summary_chars")
+    time_to_first_edit = _average_nullable_metric(results, "time_to_first_edit")
+    search_to_edit_steps = _average_nullable_metric(results, "search_to_edit_steps")
+    edit_to_test_steps = _average_nullable_metric(results, "edit_to_test_steps")
     checkpoints = _sum_metric(results, "checkpoint_created_count")
     resume_rate = _average_nullable_metric(results, "resume_success_rate")
     failure_breakdown = Counter(result.failure_category for result in results)
@@ -348,6 +375,15 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Policy denials | {policy_denials} |",
         f"| Tool failures | {tool_failures} |",
         f"| Context packs | {context_packs} |",
+        f"| Context injections | {context_injections} |",
+        f"| Estimated context tokens | {estimated_context_tokens} |",
+        f"| Memory updates | {memory_updates} |",
+        f"| Compression count | {compression_count} |",
+        f"| Hot observations | {hot_observation_count} |",
+        f"| Cold summary chars | {cold_summary_chars} |",
+        f"| Avg time to first edit | {_format_nullable_number(time_to_first_edit)} |",
+        f"| Avg search-to-edit steps | {_format_nullable_number(search_to_edit_steps)} |",
+        f"| Avg edit-to-test steps | {_format_nullable_number(edit_to_test_steps)} |",
         f"| Checkpoints | {checkpoints} |",
         f"| Resume success rate | {_format_nullable_rate(resume_rate)} |",
         f"| Failure category breakdown | {_format_breakdown(failure_breakdown)} |",
@@ -462,12 +498,39 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | Compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
         results = profile_result.results
+        if profile_result.error:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md_cell(profile_result.profile_name),
+                        _md_cell(profile_result.provider),
+                        "0",
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        _md_cell(f"profile_error=1 ({profile_result.error})"),
+                    ]
+                )
+                + " |"
+            )
+            continue
         total = len(results)
         passed = sum(1 for result in results if result.passed)
         task_successes = sum(
@@ -492,6 +555,10 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "invalid_tool_call_count")),
                     str(_sum_metric(results, "policy_denial_count")),
                     str(_sum_metric(results, "failed_tool_count")),
+                    str(_sum_metric(results, "context_injected_count")),
+                    str(_sum_metric(results, "estimated_context_tokens")),
+                    str(_sum_metric(results, "memory_updated_count")),
+                    str(_sum_metric(results, "compression_count")),
                     _md_cell(_format_breakdown(failure_breakdown)),
                 ]
             )
@@ -508,6 +575,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         ]
     )
     for profile_result in matrix:
+        if profile_result.error:
+            continue
         for category, category_results in _category_summary(profile_result.results).items():
             category_total = len(category_results)
             category_passed = sum(1 for result in category_results if result.passed)
@@ -570,6 +639,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
 
     lines.extend(["", "## Run Details"])
     for profile_result in matrix:
+        if profile_result.error:
+            continue
         lines.extend(
             [
                 "",
@@ -603,6 +674,15 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     ]
                 )
                 + " |"
+            )
+
+    errored_profiles = [item for item in matrix if item.error]
+    if errored_profiles:
+        lines.extend(["", "## Profile Errors", ""])
+        for item in errored_profiles:
+            lines.append(
+                f"- `{item.profile_name}` (`{item.provider}`): "
+                f"{_inline(item.error or '')}"
             )
 
     return "\n".join(lines).rstrip() + "\n"
@@ -1106,6 +1186,12 @@ def _format_nullable_rate(value: float | None) -> str:
     return f"{value * 100:.1f}%"
 
 
+def _format_nullable_number(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return _format_number(value)
+
+
 def _format_breakdown(counts: Counter[str]) -> str:
     if not counts:
         return "-"
@@ -1123,6 +1209,15 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         "policy_denial_count",
         "failed_tool_count",
         "context_packed_count",
+        "context_injected_count",
+        "estimated_context_tokens",
+        "memory_updated_count",
+        "compression_count",
+        "hot_observation_count",
+        "cold_summary_chars",
+        "time_to_first_edit",
+        "search_to_edit_steps",
+        "edit_to_test_steps",
         "checkpoint_created_count",
         "resume_success_rate",
         "test_passed",

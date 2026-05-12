@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 
 from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
-from harnesscoder.core.models import _model_action_from_payload
+from harnesscoder.core.context import build_context_pack
+from harnesscoder.core.models import MODEL_SYSTEM_PROMPT, OpenAICodexModel, _model_action_from_payload
+from harnesscoder.core.prompt import assemble_context
 from harnesscoder.core.state import AgentState
 
 
@@ -56,6 +58,59 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         assert action is not None
         self.assertEqual(action.kind, "tool")
         self.assertEqual(action.tool_name, "write_file")
+
+    def test_openai_payload_uses_context_assembly(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        state.file_summaries["README.md"] = "README.md: project overview"
+        context_pack = build_context_pack(state)
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=context_pack,
+            context_mode="pack",
+        )
+        model = OpenAICodexModel(
+            api_key="sk-test",
+            model="codex-test",
+            base_url="https://example.test/v1",
+        )
+
+        payload = model._build_payload(state, context)
+        user_content = payload["input"][1]["content"]
+
+        self.assertIn("packed_context", user_content)
+        self.assertIn("README.md: project overview", user_content)
+        self.assertEqual(context.context_injected, True)
+        self.assertGreater(context.estimated_tokens, 0)
+
+    def test_memory_context_renders_working_memory(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Fix tests.",
+            cwd=".",
+            max_iterations=4,
+        )
+        state.memory_blocks["task/verified_facts"].value = "tests passed once"
+        state.memory_blocks["task/verified_facts"].updated_step = 2
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["run_tests"],
+            context_pack=build_context_pack(state),
+            context_mode="memory",
+        )
+
+        assert context.working_memory is not None
+        self.assertIn("<working_memory>", context.working_memory)
+        self.assertIn("task/verified_facts", context.working_memory)
+        self.assertIn("tests passed once", context.working_memory)
 
 
 if __name__ == "__main__":

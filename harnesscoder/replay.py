@@ -216,6 +216,15 @@ def _metrics_summary(
         "policy_denial_count": len(policy_denials),
         "failed_tool_count": len(failed_tools),
         "context_packed_count": _event_count(records, "context_packed"),
+        "context_injected_count": _context_injected_count(records),
+        "estimated_context_tokens": _estimated_context_tokens(records),
+        "memory_updated_count": _event_count(records, "memory_updated"),
+        "compression_count": _compression_count(records),
+        "hot_observation_count": _hot_observation_count(records),
+        "cold_summary_chars": _cold_summary_chars(records),
+        "time_to_first_edit": _time_to_first_edit(records),
+        "search_to_edit_steps": _search_to_edit_steps(records),
+        "edit_to_test_steps": _edit_to_test_steps(records),
         "checkpoint_created_count": _event_count(records, "checkpoint_created"),
         "run_resumed_count": _event_count(records, "run_resumed")
         + _event_count(records, "resume_started"),
@@ -236,6 +245,147 @@ def _metrics_summary(
 
 def _event_count(records: list[JsonRecord], event_type: str) -> int:
     return sum(1 for record in records if record.get("type") == event_type)
+
+
+def _context_injected_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and record.get("context_injected") is True
+    )
+
+
+def _estimated_context_tokens(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        total += _as_int(record.get("estimated_tokens"))
+    return total
+
+
+def _compression_count(records: list[JsonRecord]) -> int:
+    explicit = _event_count(records, "context_compressed") + _event_count(
+        records,
+        "compression",
+    )
+    if explicit:
+        return explicit
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and _as_int(record.get("dropped_message_count")) > 0
+    )
+
+
+def _hot_observation_count(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        hot_context = record.get("hot_context")
+        if not isinstance(hot_context, dict):
+            context_pack = record.get("context_pack")
+            if isinstance(context_pack, dict):
+                hot_context = context_pack.get("hot_context")
+        if not isinstance(hot_context, dict):
+            continue
+        observations = hot_context.get("recent_observations")
+        if isinstance(observations, list):
+            total += len(observations)
+    return total
+
+
+def _cold_summary_chars(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        summary = record.get("cold_trace_summary") or record.get("summary")
+        if summary is None:
+            continue
+        total += len(_canonical_json(summary))
+    return total
+
+
+def _time_to_first_edit(records: list[JsonRecord]) -> float | None:
+    start_ts: Any = None
+    for record in records:
+        if record.get("type") == "run_started":
+            start_ts = record.get("ts")
+            break
+    if start_ts is None and records:
+        start_ts = records[0].get("ts")
+    edit_ts = None
+    for record in records:
+        result = _tool_result(record)
+        if result is None or result.get("tool_name") not in {"edit_file", "write_file"}:
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and (
+            metadata.get("changed") is True or metadata.get("created") is True
+        ):
+            edit_ts = record.get("ts")
+            break
+    return _duration_seconds(start_ts, edit_ts)
+
+
+def _search_to_edit_steps(records: list[JsonRecord]) -> int | None:
+    search_index = _first_tool_result_index(records, {"search_code"})
+    edit_index = _first_edit_result_index(records)
+    if search_index is None or edit_index is None or edit_index < search_index:
+        return None
+    return _tool_result_count_between(records, search_index, edit_index)
+
+
+def _edit_to_test_steps(records: list[JsonRecord]) -> int | None:
+    edit_index = _first_edit_result_index(records)
+    test_index = _first_tool_result_index(records, {"run_tests"}, start_after=edit_index)
+    if edit_index is None or test_index is None or test_index < edit_index:
+        return None
+    return _tool_result_count_between(records, edit_index, test_index)
+
+
+def _first_tool_result_index(
+    records: list[JsonRecord],
+    tool_names: set[str],
+    *,
+    start_after: int | None = None,
+) -> int | None:
+    for index, record in enumerate(records):
+        if start_after is not None and index <= start_after:
+            continue
+        result = _tool_result(record)
+        if result is not None and result.get("tool_name") in tool_names:
+            return index
+    return None
+
+
+def _first_edit_result_index(records: list[JsonRecord]) -> int | None:
+    for index, record in enumerate(records):
+        result = _tool_result(record)
+        if result is None or result.get("tool_name") not in {"edit_file", "write_file"}:
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and (
+            metadata.get("changed") is True or metadata.get("created") is True
+        ):
+            return index
+    return None
+
+
+def _tool_result_count_between(
+    records: list[JsonRecord],
+    start_index: int,
+    end_index: int,
+) -> int:
+    return sum(
+        1
+        for record in records[start_index + 1 : end_index + 1]
+        if _tool_result(record) is not None
+    )
 
 
 def _resume_success_rate(records: list[JsonRecord], status: str) -> float | None:

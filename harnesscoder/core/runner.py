@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -10,8 +11,10 @@ from harnesscoder.core.checkpoint import (
     save_checkpoint,
 )
 from harnesscoder.core.context import build_context_pack
-from harnesscoder.core.models import ModelAdapter
+from harnesscoder.core.memory import apply_memory_reducer, memory_blocks_to_records
+from harnesscoder.core.models import MODEL_SYSTEM_PROMPT, MODEL_TOOL_NAMES, ModelAdapter
 from harnesscoder.core.policy import PolicyDecision, ToolPolicy
+from harnesscoder.core.prompt import ContextMode, assemble_context
 from harnesscoder.core.state import AgentState, ModelAction, ToolObservation
 from harnesscoder.core.tools import ToolRegistry, ToolResult
 from harnesscoder.core.trace import TraceWriter
@@ -32,6 +35,7 @@ class AgentRunner:
         cwd: Path,
         trace_root: Path,
         max_iterations: int = 8,
+        context_mode: ContextMode = "none",
         policy: ToolPolicy | None = None,
         tools: ToolRegistry | None = None,
     ) -> None:
@@ -39,6 +43,7 @@ class AgentRunner:
         self.cwd = cwd.resolve()
         self.trace_root = trace_root
         self.max_iterations = max_iterations
+        self.context_mode = context_mode
         self.policy = policy or ToolPolicy()
         self.tools = tools or ToolRegistry(self.cwd)
 
@@ -59,6 +64,7 @@ class AgentRunner:
             cwd=str(self.cwd),
             model=getattr(self.model, "name", type(self.model).__name__),
             max_iterations=self.max_iterations,
+            context_mode=self.context_mode,
         )
 
         return self._run_loop(state, trace)
@@ -96,6 +102,13 @@ class AgentRunner:
         status = "success"
         while not state.done and state.iterations < state.max_iterations:
             context_pack = build_context_pack(state)
+            context = assemble_context(
+                state=state,
+                system_instructions=MODEL_SYSTEM_PROMPT,
+                available_tools=list(MODEL_TOOL_NAMES),
+                context_pack=context_pack,
+                context_mode=self.context_mode,
+            )
             trace.emit(
                 "context_packed",
                 reason="model_step",
@@ -106,11 +119,12 @@ class AgentRunner:
                 summary=context_pack["cold_trace_summary"],
                 packed_context=context_pack,
                 context_pack=context_pack,
+                **context.to_trace_record(),
                 **context_pack,
             )
 
             try:
-                action = self.model.next_action(state)
+                action = self._next_model_action(state, context)
             except Exception as exc:
                 status = "model_error"
                 answer = f"Model adapter failed: {type(exc).__name__}: {exc}"
@@ -156,10 +170,23 @@ class AgentRunner:
             )
             before_governance = state.governance_snapshot(include_budget=False)
             state.append_observation(observation)
+            changed_memory = apply_memory_reducer(
+                state.memory_blocks,
+                result=result,
+                step=state.iterations,
+            )
             result.metadata["changed_state"] = (
                 state.governance_snapshot(include_budget=False) != before_governance
             )
             trace.emit("tool_result", result=result.to_record())
+            if changed_memory:
+                trace.emit(
+                    "memory_updated",
+                    call_id=result.call_id,
+                    tool_name=result.tool_name,
+                    updated_blocks=changed_memory,
+                    memory_blocks=memory_blocks_to_records(state.memory_blocks),
+                )
             if result.tool_name == "run_tests":
                 trace.emit(
                     "test_result",
@@ -207,6 +234,30 @@ class AgentRunner:
             tool_name=tool_name,
             tool_args=action.tool_args,
         )
+
+    def _next_model_action(self, state: AgentState, context: object) -> ModelAction:
+        method = self.model.next_action
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return method(state, context)  # type: ignore[misc]
+
+        positional = [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+        ]
+        has_varargs = any(
+            parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            for parameter in signature.parameters.values()
+        )
+        if not has_varargs and len(positional) <= 1:
+            return method(state)  # type: ignore[call-arg]
+        return method(state, context)  # type: ignore[misc]
 
     def _attach_tool_metadata(
         self,

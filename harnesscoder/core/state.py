@@ -4,6 +4,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
 
+from harnesscoder.core.memory import (
+    MemoryBlock,
+    default_memory_blocks,
+    memory_blocks_from_records,
+    memory_blocks_to_records,
+)
+
 
 ActionKind = Literal["tool", "finish"]
 Phase = Literal["init", "explore", "edit", "verify", "done", "failed"]
@@ -78,6 +85,7 @@ class AgentState:
     last_error: str | None = None
     open_questions: list[str] = field(default_factory=list)
     budget: dict[str, Any] = field(default_factory=dict)
+    memory_blocks: dict[str, MemoryBlock] = field(default_factory=default_memory_blocks)
 
     def __post_init__(self) -> None:
         self.refresh_budget()
@@ -143,6 +151,7 @@ class AgentState:
             "last_error": self.last_error,
             "open_questions": list(self.open_questions),
             "budget": dict(self.budget),
+            "memory_blocks": memory_blocks_to_records(self.memory_blocks),
             "modified_files": list(self.modified_files),
             "action_count": len(self.actions),
             "observation_count": len(self.observations),
@@ -172,6 +181,7 @@ class AgentState:
             "last_error": self.last_error,
             "open_questions": list(self.open_questions),
             "budget": dict(self.budget),
+            "memory_blocks": memory_blocks_to_records(self.memory_blocks),
         }
 
     @classmethod
@@ -248,6 +258,7 @@ class AgentState:
                 if isinstance(record.get("budget"), dict)
                 else {}
             ),
+            memory_blocks=memory_blocks_from_records(record.get("memory_blocks")),
         )
         state.refresh_budget()
         return state
@@ -268,6 +279,7 @@ class AgentState:
             "last_error": self.last_error,
             "open_questions": list(self.open_questions),
             "modified_files": list(self.modified_files),
+            "memory_blocks": memory_blocks_to_records(self.memory_blocks),
             "done": self.done,
             "final_answer": self.final_answer,
         }
@@ -312,7 +324,9 @@ class AgentState:
         ):
             path = observation.metadata.get("path")
             if isinstance(path, str):
-                self.file_summaries.pop(path, None)
+                stale_summary = self.file_summaries.get(path)
+                if stale_summary is not None and not stale_summary.startswith("STALE:"):
+                    self.file_summaries[path] = f"STALE after edit: {stale_summary}"
 
 
 def _format_observation_error(observation: ToolObservation) -> str:

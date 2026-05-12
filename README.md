@@ -20,9 +20,10 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.7.2` is a runnable local runtime with real bugfix and minimal
+Version `0.8.3` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
-model-profile comparison, context governance, checkpoint/resume support, and a
+model-profile comparison, context-governed prompt assembly, task-local memory,
+compression metrics, checkpoint/resume support, and a
 lightweight TUI with live refresh. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
@@ -84,7 +85,7 @@ commands for direct tools and runtime controls:
 /model gpt-5.5
 /model scripted
 /provider openai-codex
-/base-url https://api.dest.space
+/base-url https://your-openai-compatible-endpoint.example
 /read README.md
 /search HarnessCoder
 /edit README.md old new
@@ -223,16 +224,42 @@ cp models.example.toml models.toml
 
 python -m harnesscoder \
   --model-config models.toml \
-  --model-profiles scripted,openai_codex \
-  --eval eval/bugfix_cases.json \
+  --model-profiles hc_bench_oracle,scripted,openai_codex \
+  --eval eval/hc_bench_20.json \
   --max-iterations 8 \
-  --eval-report .harnesscoder/reports/bugfix-matrix.md
+  --eval-report .harnesscoder/reports/hc-bench-20-real-matrix.md
 ```
 
 The matrix report compares pass rate, test pass rate, verifier pass rate,
 average tool calls, repeated reads, invalid calls, policy denials, tool
-failures, and failure categories. Each profile/case run still keeps its own
-trace.
+failures, memory/compression metrics, and failure categories. Each profile/case
+run still keeps its own trace. If a real-model profile cannot initialize, the
+matrix records the profile error instead of hiding the reason.
+
+Compare context modes:
+
+```bash
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles openai_codex \
+  --context-mode none \
+  --eval eval/hc_bench_20.json \
+  --eval-report .harnesscoder/reports/hc-bench-20-real-none.md
+
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles openai_codex \
+  --context-mode pack \
+  --eval eval/hc_bench_20.json \
+  --eval-report .harnesscoder/reports/hc-bench-20-real-pack.md
+
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles openai_codex \
+  --context-mode memory \
+  --eval eval/hc_bench_20.json \
+  --eval-report .harnesscoder/reports/hc-bench-20-real-memory.md
+```
 
 Run HC-Bench-20 with the deterministic local oracle:
 
@@ -260,8 +287,7 @@ suite through `--model-profiles`.
 
 Near-term TODOs:
 
-- Improve the TUI with streaming status, better history navigation, and trace
-  inspection commands.
-- Use context packs directly in the live model prompt, not only in trace.
+- Improve the TUI with better history navigation and richer trace inspection
+  commands.
 - Add richer failure replay fixtures under `replay/`.
 - Add token/cost accounting when providers return usage data.

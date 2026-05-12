@@ -7,6 +7,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from harnesscoder.core.prompt import ContextAssembly
 from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 
@@ -24,7 +25,11 @@ MODEL_TOOL_NAMES = (
 class ModelAdapter(Protocol):
     name: str
 
-    def next_action(self, state: AgentState) -> ModelAction:
+    def next_action(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> ModelAction:
         """Return the next model decision for the current agent state."""
 
 
@@ -37,7 +42,11 @@ class ScriptedModel:
 
     name = "scripted"
 
-    def next_action(self, state: AgentState) -> ModelAction:
+    def next_action(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> ModelAction:
         if state.latest_observation_for("search_code") is None:
             return ModelAction(
                 kind="tool",
@@ -102,11 +111,15 @@ class HCBenchOracleModel:
 
     name = "hc-bench-oracle"
 
-    def next_action(self, state: AgentState) -> ModelAction:
+    def next_action(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> ModelAction:
         action = hc_bench_oracle_action(state)
         if action is not None:
             return action
-        return ScriptedModel().next_action(state)
+        return ScriptedModel().next_action(state, context)
 
 
 @dataclass(slots=True)
@@ -123,22 +136,35 @@ class OpenAICodexModel:
     def __post_init__(self) -> None:
         self.base_url = _normalize_openai_base_url(self.base_url)
 
-    def next_action(self, state: AgentState) -> ModelAction:
-        response = self._post_responses(self._build_payload(state))
+    def next_action(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> ModelAction:
+        response = self._post_responses(self._build_payload(state, context))
         text = _extract_response_text(response)
         action_payload = _parse_action_json(text)
         return _model_action_from_payload(action_payload)
 
-    def _build_payload(self, state: AgentState) -> dict[str, Any]:
-        return {
-            "model": self.model,
-            "input": [
+    def _build_payload(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> dict[str, Any]:
+        input_messages = (
+            context.to_model_input()
+            if context is not None
+            else [
                 {"role": "system", "content": MODEL_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": json.dumps(_state_view(state), ensure_ascii=False),
                 },
-            ],
+            ]
+        )
+        return {
+            "model": self.model,
+            "input": input_messages,
             "temperature": 0,
             "max_output_tokens": self.max_output_tokens,
         }

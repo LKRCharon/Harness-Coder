@@ -96,8 +96,8 @@ class ProfiledModel:
         adapter_name = getattr(self.adapter, "name", type(self.adapter).__name__)
         return f"{self.profile_name}:{adapter_name}"
 
-    def next_action(self, state: Any) -> Any:
-        return self.adapter.next_action(state)
+    def next_action(self, state: Any, context: Any = None) -> Any:
+        return self.adapter.next_action(state, context)
 
 
 def load_model_profiles(config_path: str | Path) -> dict[str, ModelProfile]:

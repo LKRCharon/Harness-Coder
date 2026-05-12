@@ -82,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum agent loop iterations.",
     )
     parser.add_argument(
+        "--context-mode",
+        choices=["none", "pack", "memory"],
+        default=os.environ.get("HARNESSCODER_CONTEXT_MODE", "none"),
+        help="Prompt context mode: none, pack, or memory.",
+    )
+    parser.add_argument(
         "--trace-root",
         default=".harnesscoder/runs",
         help="Directory where run traces are written.",
@@ -141,6 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cwd=cwd,
             trace_root=Path(args.trace_root),
             max_iterations=args.max_iterations,
+            context_mode=args.context_mode,
         )
         result = runner.resume_from_checkpoint(args.resume)
         print(result.final_answer)
@@ -166,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 profiles=profiles,
                 trace_root=Path(args.eval_trace_root),
                 max_iterations=args.max_iterations,
+                context_mode=args.context_mode,
             )
             report = render_markdown_matrix(matrix)
             if args.eval_report:
@@ -175,11 +183,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"eval matrix report: {report_path.resolve()}")
             else:
                 print(report, end="")
-            return 0 if all(
-                result.passed
+            matrix_passed = all(
+                profile_result.error is None
+                and profile_result.results
+                and all(result.passed for result in profile_result.results)
                 for profile_result in matrix
-                for result in profile_result.results
-            ) else 1
+            )
+            return 0 if matrix_passed else 1
 
         model = build_model(args)
         results = run_eval_cases(
@@ -189,6 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trace_root=Path(args.eval_trace_root),
             max_iterations=args.max_iterations,
             model=model,
+            context_mode=args.context_mode,
         )
         report = render_markdown_report(results)
         if args.eval_report:
@@ -224,6 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cwd=cwd,
         trace_root=Path(args.trace_root),
         max_iterations=args.max_iterations,
+        context_mode=args.context_mode,
     )
     result = runner.run(task)
 
