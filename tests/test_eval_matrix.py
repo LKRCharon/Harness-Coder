@@ -29,17 +29,24 @@ class EvalMatrixTests(unittest.TestCase):
                 'provider = "openai-codex"\n'
                 'model = "gpt-test"\n'
                 'base_url = "https://example.test/v1"\n'
-                'api_key_env = "OPENAI_API_KEY"\n',
+                'api_key_env = "OPENAI_API_KEY"\n\n'
+                "[models.deepseek]\n"
+                'provider = "openai-chat"\n'
+                'model = "deepseek-v4-pro"\n'
+                'base_url = "https://api.deepseek.com"\n'
+                'api_key_env = "DEEPSEEK_API_KEY"\n',
                 encoding="utf-8",
             )
 
             profiles = load_model_profiles(config)
 
-        self.assertEqual(sorted(profiles), ["gpt", "oracle", "scripted"])
+        self.assertEqual(sorted(profiles), ["deepseek", "gpt", "oracle", "scripted"])
         self.assertEqual(profiles["scripted"].provider, "scripted")
         self.assertEqual(profiles["oracle"].provider, "hc-bench-oracle")
         self.assertEqual(profiles["gpt"].provider, "openai-codex")
         self.assertEqual(profiles["gpt"].model, "gpt-test")
+        self.assertEqual(profiles["deepseek"].provider, "openai-chat")
+        self.assertEqual(profiles["deepseek"].api_key_env, "DEEPSEEK_API_KEY")
 
     def test_parse_profile_names_rejects_duplicates(self) -> None:
         self.assertEqual(parse_profile_names("scripted,gpt"), ["scripted", "gpt"])
@@ -76,7 +83,7 @@ class EvalMatrixTests(unittest.TestCase):
             profiles=[
                 ModelProfile(
                     name="real_missing_key",
-                    provider="openai-codex",
+                    provider="openai-chat",
                     model="codex-test",
                     api_key_env="HARNESSCODER_TEST_MISSING_KEY",
                 ),
@@ -99,7 +106,7 @@ class EvalMatrixTests(unittest.TestCase):
             code = main(
                 [
                     "--model-profiles",
-                    "openai-codex",
+                    "openai-chat",
                     "--eval",
                     str(ROOT / "eval" / "bugfix_cases.json"),
                     "--eval-report",

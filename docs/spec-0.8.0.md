@@ -17,6 +17,8 @@ Acceptance:
 
 - `hc-bench-oracle` remains the deterministic harness baseline.
 - Matrix runs can include oracle, scripted, and `openai-codex` profiles.
+- Matrix runs can also include `openai-chat` profiles for Chat Completions
+  providers such as DeepSeek.
 - Profile initialization failures are rendered in the Markdown matrix report.
 - Public docs use generic endpoint placeholders only.
 - Matrix metrics include pass rate, test pass, verifier pass, tool calls,

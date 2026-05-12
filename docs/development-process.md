@@ -937,3 +937,32 @@ injection, estimated tokens, memory updates, and compression counts by profile.
 Interview angle:
 This lets the project explain whether context governance changes behavior, not
 just whether a final answer passed.
+
+## 0.8.4 Milestone
+
+### 42. DeepSeek Uses A Chat Completions Provider, Not A Responses Gateway
+
+Problem:
+HarnessCoder's first real-model adapter was `openai-codex`, which calls the
+Responses API. DeepSeek's public API is OpenAI-compatible at the Chat
+Completions layer, so forcing it through a Responses gateway would add an extra
+failure source to eval results.
+
+Decision:
+Add a generic `openai-chat` provider. It uses the same model-decision prompt and
+JSON action parser as `openai-codex`, but sends payloads to
+`/chat/completions` with `messages`, `max_tokens`, and `stream=false`.
+DeepSeek is configured as a local model profile:
+
+```toml
+[models.deepseek]
+provider = "openai-chat"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+```
+
+Interview angle:
+This keeps the harness honest. Direct provider support makes model failures,
+prompt failures, and tool-loop failures easier to separate than a hidden gateway
+translation layer.

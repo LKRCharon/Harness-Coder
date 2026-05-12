@@ -15,6 +15,7 @@ from typing import Any
 from harnesscoder.core.models import (
     HCBenchOracleModel,
     ModelAdapter,
+    OpenAIChatModel,
     OpenAICodexModel,
     ScriptedModel,
 )
@@ -943,7 +944,7 @@ def _build_model(provider: str) -> ModelAdapter:
     if provider == "hc-bench-oracle":
         return HCBenchOracleModel()
 
-    if provider == "openai-codex":
+    if provider in {"openai-codex", "openai-chat"}:
         api_key = os.environ.get("OPENAI_API_KEY")
         model = os.environ.get("HARNESSCODER_OPENAI_MODEL") or os.environ.get(
             "OPENAI_MODEL"
@@ -952,13 +953,14 @@ def _build_model(provider: str) -> ModelAdapter:
             "OPENAI_BASE_URL", "https://api.openai.com/v1"
         )
         if not api_key:
-            raise ValueError("OPENAI_API_KEY is required for provider='openai-codex'")
+            raise ValueError(f"OPENAI_API_KEY is required for provider={provider!r}")
         if not model:
             raise ValueError(
                 "HARNESSCODER_OPENAI_MODEL or OPENAI_MODEL is required for "
-                "provider='openai-codex'"
+                f"provider={provider!r}"
             )
-        return OpenAICodexModel(api_key=api_key, model=model, base_url=base_url)
+        model_cls = OpenAICodexModel if provider == "openai-codex" else OpenAIChatModel
+        return model_cls(api_key=api_key, model=model, base_url=base_url)
 
     raise ValueError(f"unsupported eval provider: {provider}")
 

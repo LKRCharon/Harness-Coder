@@ -170,38 +170,69 @@ class OpenAICodexModel:
         }
 
     def _post_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self.base_url}/responses"
-        request = urllib.request.Request(
-            url=url,
-            method="POST",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "HarnessCoder/0.1",
-            },
+        return _post_json(
+            url=f"{self.base_url}/responses",
+            payload=payload,
+            api_key=self.api_key,
+            timeout=self.timeout,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw_body = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            raise ModelAdapterError(
-                f"model API returned HTTP {exc.code}: {_clip(error_body, 2000)}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise ModelAdapterError(f"model API request failed: {exc}") from exc
 
-        try:
-            parsed = json.loads(raw_body)
-        except json.JSONDecodeError as exc:
-            raise ModelAdapterError(
-                f"model API returned non-JSON response: {_clip(raw_body, 2000)}"
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise ModelAdapterError("model API response must be a JSON object")
-        return parsed
+
+@dataclass(slots=True)
+class OpenAIChatModel:
+    """OpenAI-compatible Chat Completions adapter for model decisions."""
+
+    api_key: str
+    model: str
+    base_url: str = "https://api.openai.com/v1"
+    timeout: int = 60
+    max_output_tokens: int = 1200
+    name: str = "openai-chat"
+
+    def __post_init__(self) -> None:
+        self.base_url = _normalize_openai_base_url(self.base_url)
+
+    def next_action(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> ModelAction:
+        response = self._post_chat_completions(self._build_payload(state, context))
+        text = _extract_response_text(response)
+        action_payload = _parse_action_json(text)
+        return _model_action_from_payload(action_payload)
+
+    def _build_payload(
+        self,
+        state: AgentState,
+        context: ContextAssembly | None = None,
+    ) -> dict[str, Any]:
+        messages = (
+            context.to_model_input()
+            if context is not None
+            else [
+                {"role": "system", "content": MODEL_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(_state_view(state), ensure_ascii=False),
+                },
+            ]
+        )
+        return {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": self.max_output_tokens,
+            "stream": False,
+        }
+
+    def _post_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return _post_json(
+            url=f"{self.base_url}/chat/completions",
+            payload=payload,
+            api_key=self.api_key,
+            timeout=self.timeout,
+        )
 
 
 MODEL_SYSTEM_PROMPT = """You are the model-decision layer inside HarnessCoder.
@@ -246,6 +277,46 @@ def _normalize_openai_base_url(base_url: str) -> str:
     if not normalized.endswith("/v1"):
         normalized = f"{normalized}/v1"
     return normalized
+
+
+def _post_json(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+    timeout: int,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url=url,
+        method="POST",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "HarnessCoder/0.1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw_body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise ModelAdapterError(
+            f"model API returned HTTP {exc.code}: {_clip(error_body, 2000)}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ModelAdapterError(f"model API request failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise ModelAdapterError(
+            f"model API returned non-JSON response: {_clip(raw_body, 2000)}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ModelAdapterError("model API response must be a JSON object")
+    return parsed
 
 
 def _state_view(state: AgentState) -> dict[str, Any]:

@@ -4,7 +4,13 @@ import unittest
 
 from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 from harnesscoder.core.context import build_context_pack
-from harnesscoder.core.models import MODEL_SYSTEM_PROMPT, OpenAICodexModel, _model_action_from_payload
+from harnesscoder.core.models import (
+    MODEL_SYSTEM_PROMPT,
+    OpenAIChatModel,
+    OpenAICodexModel,
+    _extract_response_text,
+    _model_action_from_payload,
+)
 from harnesscoder.core.prompt import assemble_context
 from harnesscoder.core.state import AgentState
 
@@ -111,6 +117,50 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("<working_memory>", context.working_memory)
         self.assertIn("task/verified_facts", context.working_memory)
         self.assertIn("tests passed once", context.working_memory)
+
+    def test_openai_chat_payload_uses_chat_completions_shape(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+        model = OpenAIChatModel(
+            api_key="sk-test",
+            model="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+        )
+
+        payload = model._build_payload(state, context)
+
+        self.assertEqual(payload["model"], "deepseek-v4-pro")
+        self.assertIn("messages", payload)
+        self.assertNotIn("input", payload)
+        self.assertEqual(payload["stream"], False)
+        self.assertIn("packed_context", payload["messages"][1]["content"])
+        self.assertEqual(model.base_url, "https://api.deepseek.com/v1")
+
+    def test_extracts_chat_completion_text(self) -> None:
+        text = _extract_response_text(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"kind":"finish","content":"done"}'
+                        }
+                    }
+                ]
+            }
+        )
+
+        self.assertIn('"kind":"finish"', text)
 
 
 if __name__ == "__main__":

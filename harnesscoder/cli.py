@@ -9,6 +9,7 @@ from harnesscoder import __version__
 from harnesscoder.core.models import (
     HCBenchOracleModel,
     ModelAdapter,
+    OpenAIChatModel,
     OpenAICodexModel,
     ScriptedModel,
 )
@@ -99,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider",
-        choices=["scripted", "hc-bench-oracle", "openai-codex"],
+        choices=["scripted", "hc-bench-oracle", "openai-codex", "openai-chat"],
         default=os.environ.get("HARNESSCODER_MODEL_PROVIDER", "scripted"),
         help="Model provider. Defaults to scripted.",
     )
@@ -108,13 +109,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("HARNESSCODER_OPENAI_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
         or "https://api.openai.com/v1",
-        help="OpenAI-compatible base URL for --provider openai-codex.",
+        help="OpenAI-compatible base URL for --provider openai-codex/openai-chat.",
     )
     parser.add_argument(
         "--openai-model",
         default=os.environ.get("HARNESSCODER_OPENAI_MODEL")
         or os.environ.get("OPENAI_MODEL"),
-        help="Model name for --provider openai-codex.",
+        help="Model name for --provider openai-codex/openai-chat.",
     )
     parser.add_argument(
         "--openai-api-key-env",
@@ -258,18 +259,22 @@ def build_model(args: argparse.Namespace) -> ModelAdapter:
     if args.provider == "hc-bench-oracle":
         return HCBenchOracleModel()
 
+    if args.provider not in {"openai-codex", "openai-chat"}:
+        raise SystemExit(f"unsupported provider: {args.provider}")
+
     api_key = os.environ.get(args.openai_api_key_env)
     if not api_key:
         raise SystemExit(
-            f"{args.openai_api_key_env} is required for --provider openai-codex"
+            f"{args.openai_api_key_env} is required for --provider {args.provider}"
         )
     if not args.openai_model:
         raise SystemExit(
             "HARNESSCODER_OPENAI_MODEL, OPENAI_MODEL, or --openai-model is required for "
-            "--provider openai-codex"
+            f"--provider {args.provider}"
         )
 
-    return OpenAICodexModel(
+    model_cls = OpenAICodexModel if args.provider == "openai-codex" else OpenAIChatModel
+    return model_cls(
         api_key=api_key,
         base_url=args.openai_base_url,
         model=args.openai_model,
@@ -311,12 +316,20 @@ def resolve_model_profile(
             base_url=args.openai_base_url,
             api_key_env=args.openai_api_key_env,
         )
+    if name in {"openai-chat", "deepseek"}:
+        return ModelProfile(
+            name=name,
+            provider="openai-chat",
+            model=args.openai_model,
+            base_url=args.openai_base_url,
+            api_key_env=args.openai_api_key_env,
+        )
 
     config_path = resolve_model_config_path(args.model_config, cwd)
     raise SystemExit(
         f"model profile {name!r} was not found in {config_path}. "
         "Use --model-config or one of the built-in profiles: scripted, "
-        "hc-bench-oracle, openai-codex."
+        "hc-bench-oracle, openai-codex, openai-chat."
     )
 
 

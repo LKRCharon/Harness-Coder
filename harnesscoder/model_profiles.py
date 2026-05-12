@@ -9,6 +9,7 @@ from typing import Any
 from harnesscoder.core.models import (
     HCBenchOracleModel,
     ModelAdapter,
+    OpenAIChatModel,
     OpenAICodexModel,
     ScriptedModel,
 )
@@ -35,7 +36,7 @@ class ModelProfile:
 
         if provider in {"scripted", "hc-bench-oracle"}:
             return cls(name=name, provider=provider)
-        if provider == "openai-codex":
+        if provider in {"openai-codex", "openai-chat"}:
             return cls(
                 name=name,
                 provider=provider,
@@ -54,7 +55,7 @@ class ModelProfile:
         if self.provider == "hc-bench-oracle":
             return ProfiledModel(self.name, HCBenchOracleModel())
 
-        if self.provider == "openai-codex":
+        if self.provider in {"openai-codex", "openai-chat"}:
             api_key = os.environ.get(self.api_key_env)
             if not api_key:
                 raise ValueError(
@@ -72,9 +73,14 @@ class ModelProfile:
                 or os.environ.get("OPENAI_BASE_URL")
                 or "https://api.openai.com/v1"
             )
+            model_cls = (
+                OpenAICodexModel
+                if self.provider == "openai-codex"
+                else OpenAIChatModel
+            )
             return ProfiledModel(
                 self.name,
-                OpenAICodexModel(
+                model_cls(
                     api_key=api_key,
                     model=model,
                     base_url=base_url,

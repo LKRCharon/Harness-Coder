@@ -20,7 +20,7 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.8.3` is a runnable local runtime with real bugfix and minimal
+Version `0.8.4` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, checkpoint/resume support, and a
@@ -97,11 +97,15 @@ commands for direct tools and runtime controls:
 The current TUI is intentionally small: it is a runnable control surface for the
 runtime and eval harness, not a full Claude Code clone.
 
-## OpenAI-Compatible Codex Provider
+## OpenAI-Compatible Providers
 
-The MVP also includes an optional `openai-codex` provider. It calls an
-OpenAI-compatible Responses API endpoint and asks the model to return a strict
-JSON action for the runtime to execute.
+The MVP includes two optional OpenAI-compatible real-model providers:
+
+- `openai-codex` calls a Responses API endpoint at `/responses`.
+- `openai-chat` calls a Chat Completions endpoint at `/chat/completions`.
+
+Both providers ask the model to return a strict JSON action for the runtime to
+execute.
 
 Keep secrets out of the repo. Configure the provider with environment variables
 or a local `.env` file:
@@ -115,7 +119,33 @@ python -m harnesscoder --provider openai-codex "看一下这个 repo 是做什�
 ```
 
 If the base URL does not end in `/v1`, HarnessCoder appends `/v1` before calling
-`/responses`.
+`/responses` or `/chat/completions`.
+
+DeepSeek can be configured through the Chat Completions provider. Keep the API
+key in `.env` or your shell environment and reference the variable from
+`models.toml`:
+
+```toml
+[models.deepseek]
+provider = "openai-chat"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+timeout = 120
+max_output_tokens = 2000
+```
+
+Run a DeepSeek matrix:
+
+```bash
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles hc_bench_oracle,scripted,deepseek \
+  --context-mode pack \
+  --eval eval/hc_bench_20.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-20-deepseek-matrix.md
+```
 
 When launched from a repo, the CLI auto-loads `.env` from the current directory
 and from `--cwd` if it is different. Existing shell environment variables win
@@ -224,7 +254,7 @@ cp models.example.toml models.toml
 
 python -m harnesscoder \
   --model-config models.toml \
-  --model-profiles hc_bench_oracle,scripted,openai_codex \
+  --model-profiles hc_bench_oracle,scripted,openai_codex,deepseek \
   --eval eval/hc_bench_20.json \
   --max-iterations 8 \
   --eval-report .harnesscoder/reports/hc-bench-20-real-matrix.md
@@ -241,21 +271,21 @@ Compare context modes:
 ```bash
 python -m harnesscoder \
   --model-config models.toml \
-  --model-profiles openai_codex \
+  --model-profiles deepseek \
   --context-mode none \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-real-none.md
 
 python -m harnesscoder \
   --model-config models.toml \
-  --model-profiles openai_codex \
+  --model-profiles deepseek \
   --context-mode pack \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-real-pack.md
 
 python -m harnesscoder \
   --model-config models.toml \
-  --model-profiles openai_codex \
+  --model-profiles deepseek \
   --context-mode memory \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-real-memory.md

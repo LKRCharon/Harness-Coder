@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from harnesscoder.core.models import HCBenchOracleModel, OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import (
+    HCBenchOracleModel,
+    OpenAIChatModel,
+    OpenAICodexModel,
+    ScriptedModel,
+)
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.runner import AgentRunner, RunResult
 from harnesscoder.core.tools import ToolRegistry
@@ -469,7 +474,7 @@ class HarnessCoderTui:
                         "/help - show this help",
                         "/status - show cwd/provider/model",
                         "/clear - clear the message pane",
-                        "/provider [scripted|hc-bench-oracle|openai-codex] - show or change provider",
+                        "/provider [scripted|hc-bench-oracle|openai-codex|openai-chat] - show or change provider",
                         "/model [name|scripted] - show or change model",
                         "/base-url [url] - show or change OpenAI-compatible base URL",
                         "/cwd [path] - show or change repository cwd",
@@ -513,11 +518,11 @@ class HarnessCoderTui:
             self.messages.append(Message("system", f"provider: {self.config.provider}"))
             return
         provider = args[0]
-        if provider not in {"scripted", "hc-bench-oracle", "openai-codex"}:
+        if provider not in {"scripted", "hc-bench-oracle", "openai-codex", "openai-chat"}:
             self.messages.append(
                 Message(
                     "error",
-                    "Provider must be scripted, hc-bench-oracle, or openai-codex.",
+                    "Provider must be scripted, hc-bench-oracle, openai-codex, or openai-chat.",
                 )
             )
             return
@@ -795,7 +800,7 @@ class HarnessCoderTui:
     def _build_model(
         self,
         config: TuiConfig | None = None,
-    ) -> ScriptedModel | HCBenchOracleModel | OpenAICodexModel:
+    ) -> ScriptedModel | HCBenchOracleModel | OpenAICodexModel | OpenAIChatModel:
         config = config or self.config
         if config.provider == "scripted":
             return ScriptedModel()
@@ -805,11 +810,16 @@ class HarnessCoderTui:
         api_key = os.environ.get(config.openai_api_key_env)
         if not api_key:
             raise ValueError(
-                f"{config.openai_api_key_env} is required for openai-codex"
+                f"{config.openai_api_key_env} is required for {config.provider}"
             )
         if not config.openai_model:
             raise ValueError("A model name is required. Use /model <name>.")
-        return OpenAICodexModel(
+        model_cls = (
+            OpenAICodexModel
+            if config.provider == "openai-codex"
+            else OpenAIChatModel
+        )
+        return model_cls(
             api_key=api_key,
             base_url=config.openai_base_url,
             model=config.openai_model,

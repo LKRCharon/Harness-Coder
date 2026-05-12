@@ -11,3 +11,11 @@ base_url = "https://your-openai-compatible-endpoint.example/v1"
 api_key_env = "OPENAI_API_KEY"
 timeout = 60
 max_output_tokens = 1200
+
+[models.deepseek]
+provider = "openai-chat"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+timeout = 120
+max_output_tokens = 2000
