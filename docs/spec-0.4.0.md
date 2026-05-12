@@ -37,8 +37,9 @@ When `repo_fixture` is present, the eval runner must:
 - `eval/bugfix_cases.json` contains a real bugfix case.
 - The fixture's test command fails before a successful agent edit.
 - A real OpenAI-compatible model run can pass the case within 8 iterations.
-- Replay metrics show at least one `edit_file` and at least two `run_tests`
-  events for the successful run.
+- The case prompt asks the model to run tests first, edit, and rerun tests.
+- Replay metrics should show at least one `edit_file` and preferably at least
+  two `run_tests` events for the successful run.
 - Unit tests verify fixture isolation and report rendering.
 
 ## Non-Goals

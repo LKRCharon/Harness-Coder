@@ -272,6 +272,7 @@ def _parse_action_json(text: str) -> dict[str, Any]:
 
 
 def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
+    payload = _normalize_action_payload(payload)
     kind = payload.get("kind")
     rationale = payload.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
@@ -300,6 +301,51 @@ def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
         )
 
     raise ModelAdapterError("model action kind must be either 'tool' or 'finish'")
+
+
+def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    raw_kind = normalized.get("kind")
+    raw_action = normalized.get("action")
+
+    if not isinstance(raw_kind, str) or not raw_kind.strip():
+        raw_kind = raw_action if isinstance(raw_action, str) else None
+    kind = raw_kind.strip().lower() if isinstance(raw_kind, str) else None
+
+    if kind in MODEL_TOOL_NAMES:
+        normalized["kind"] = "tool"
+        normalized.setdefault("tool_name", kind)
+    elif kind in {"tool", "tool_call", "call_tool", "use_tool"}:
+        normalized["kind"] = "tool"
+    elif kind in {"finish", "final", "answer", "done", "complete", "completed"}:
+        normalized["kind"] = "finish"
+
+    if "tool_name" not in normalized:
+        for key in ("tool", "name"):
+            value = normalized.get(key)
+            if isinstance(value, str) and value.strip():
+                normalized["tool_name"] = value.strip()
+                break
+
+    tool_args = normalized.get("tool_args")
+    if not isinstance(tool_args, dict):
+        for key in ("args", "arguments", "parameters", "input"):
+            value = normalized.get(key)
+            if isinstance(value, dict):
+                normalized["tool_args"] = value
+                break
+
+    if normalized.get("kind") is None and isinstance(normalized.get("tool_name"), str):
+        normalized["kind"] = "tool"
+
+    if normalized.get("kind") == "finish" and "content" not in normalized:
+        for key in ("final_answer", "answer", "message", "summary"):
+            value = normalized.get(key)
+            if isinstance(value, str):
+                normalized["content"] = value
+                break
+
+    return normalized
 
 
 def _clip(text: str, limit: int) -> str:

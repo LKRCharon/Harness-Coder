@@ -14,6 +14,7 @@ from typing import Any
 
 from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
 
 
@@ -86,6 +87,13 @@ class EvalResult:
     failure_category: str = "incomplete"
     metrics: dict[str, Any] = field(default_factory=dict)
     trace_summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class EvalMatrixProfileResult:
+    profile_name: str
+    provider: str
+    results: list[EvalResult]
 
 
 def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
@@ -213,6 +221,34 @@ def run_eval_cases(
     return results
 
 
+def run_eval_matrix(
+    cases_path: str | Path,
+    workspace_root: str | Path,
+    profiles: list[ModelProfile],
+    *,
+    trace_root: str | Path = ".harnesscoder/eval-runs",
+    max_iterations: int = 8,
+) -> list[EvalMatrixProfileResult]:
+    matrix: list[EvalMatrixProfileResult] = []
+    for profile in profiles:
+        results = run_eval_cases(
+            cases_path=cases_path,
+            workspace_root=workspace_root,
+            provider=profile.provider,
+            trace_root=trace_root,
+            max_iterations=max_iterations,
+            model=profile.build(),
+        )
+        matrix.append(
+            EvalMatrixProfileResult(
+                profile_name=profile.name,
+                provider=profile.provider,
+                results=results,
+            )
+        )
+    return matrix
+
+
 def render_markdown_report(results: list[EvalResult]) -> str:
     total = len(results)
     passed = sum(1 for result in results if result.passed)
@@ -307,6 +343,116 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         )
         if output:
             lines.extend(["", "```text", output, "```"])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
+    total_profiles = len(matrix)
+    all_case_ids = _case_ids_from_matrix(matrix)
+    lines = [
+        "# HarnessCoder Eval Matrix",
+        "",
+        f"- Profiles: {total_profiles}",
+        f"- Cases: {len(all_case_ids)}",
+        "",
+        "## Profile Summary",
+        "",
+        "| Profile | Provider | Cases | Passed | Task success | Test pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    for profile_result in matrix:
+        results = profile_result.results
+        total = len(results)
+        passed = sum(1 for result in results if result.passed)
+        task_successes = sum(
+            1 for result in results if result.runner_status == "success"
+        )
+        test_passes = sum(1 for result in results if result.test_passed)
+        failure_breakdown = Counter(result.failure_category for result in results)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _md_cell(profile_result.profile_name),
+                    _md_cell(profile_result.provider),
+                    str(total),
+                    _format_rate(passed, total),
+                    _format_rate(task_successes, total),
+                    _format_rate(test_passes, total),
+                    _format_number(_average_metric(results, "average_tool_calls")),
+                    str(_sum_metric(results, "repeated_read_count")),
+                    str(_sum_metric(results, "invalid_tool_call_count")),
+                    str(_sum_metric(results, "policy_denial_count")),
+                    str(_sum_metric(results, "failed_tool_count")),
+                    _md_cell(_format_breakdown(failure_breakdown)),
+                ]
+            )
+            + " |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Case Matrix",
+            "",
+            "| Case | " + " | ".join(_md_cell(item.profile_name) for item in matrix) + " |",
+            "| --- | " + " | ".join("---" for _item in matrix) + " |",
+        ]
+    )
+    by_profile = {
+        item.profile_name: {result.case_id: result for result in item.results}
+        for item in matrix
+    }
+    for case_id in all_case_ids:
+        row = [case_id]
+        for item in matrix:
+            result = by_profile.get(item.profile_name, {}).get(case_id)
+            if result is None:
+                row.append("-")
+            else:
+                status = "PASS" if result.passed else "FAIL"
+                row.append(
+                    _md_cell(
+                        f"{status}<br>{result.failure_category}<br>{result.run_id}"
+                    )
+                )
+        lines.append("| " + " | ".join(row) + " |")
+
+    lines.extend(["", "## Run Details"])
+    for profile_result in matrix:
+        lines.extend(
+            [
+                "",
+                f"### {profile_result.profile_name}",
+                "",
+                "| Case | Result | Agent | Test | Failure | Trace | Tools |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for result in profile_result.results:
+            status = "PASS" if result.passed else "FAIL"
+            test_status = (
+                "timeout"
+                if result.test_timed_out
+                else f"rc={result.test_returncode}"
+            )
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md_cell(result.case_id),
+                        status,
+                        _md_cell(result.runner_status),
+                        _md_cell(test_status),
+                        _md_cell(result.failure_category),
+                        _md_cell(str(result.trace_path)),
+                        _md_cell(_format_tool_counts(result.tool_counts)),
+                    ]
+                )
+                + " |"
+            )
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -639,6 +785,18 @@ def _failure_category_from_summary(summary: dict[str, Any]) -> str:
         if isinstance(category, str) and category:
             return category
     return "incomplete"
+
+
+def _case_ids_from_matrix(matrix: list[EvalMatrixProfileResult]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for profile_result in matrix:
+        for result in profile_result.results:
+            if result.case_id in seen:
+                continue
+            seen.add(result.case_id)
+            ordered.append(result.case_id)
+    return ordered
 
 
 def _average_metric(results: list[EvalResult], key: str) -> float:

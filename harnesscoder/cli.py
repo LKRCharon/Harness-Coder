@@ -6,8 +6,14 @@ from pathlib import Path
 from typing import Sequence
 
 from harnesscoder import __version__
-from harnesscoder.core.models import OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.model_profiles import (
+    ModelProfile,
+    load_model_profiles,
+    parse_profile_names,
+    resolve_model_config_path,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +46,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--eval-report",
         metavar="PATH",
         help="Write the eval Markdown report to a file.",
+    )
+    parser.add_argument(
+        "--model-config",
+        default=os.environ.get("HARNESSCODER_MODEL_CONFIG", "models.toml"),
+        help="TOML model profile config. Defaults to models.toml.",
+    )
+    parser.add_argument(
+        "--model-profile",
+        help="Run a single configured model profile.",
+    )
+    parser.add_argument(
+        "--model-profiles",
+        help="Comma-separated profiles for eval matrix mode, for example scripted,gpt55.",
     )
     parser.add_argument(
         "--version",
@@ -127,7 +146,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.status == "success" else 1
 
     if args.eval:
-        from harnesscoder.eval_runner import render_markdown_report, run_eval_cases
+        from harnesscoder.eval_runner import (
+            render_markdown_matrix,
+            render_markdown_report,
+            run_eval_cases,
+            run_eval_matrix,
+        )
+
+        if args.model_profiles:
+            profiles = build_eval_profiles(args, cwd)
+            matrix = run_eval_matrix(
+                cases_path=args.eval,
+                workspace_root=cwd,
+                profiles=profiles,
+                trace_root=Path(args.eval_trace_root),
+                max_iterations=args.max_iterations,
+            )
+            report = render_markdown_matrix(matrix)
+            if args.eval_report:
+                report_path = Path(args.eval_report)
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(report, encoding="utf-8")
+                print(f"eval matrix report: {report_path.resolve()}")
+            else:
+                print(report, end="")
+            return 0 if all(
+                result.passed
+                for profile_result in matrix
+                for result in profile_result.results
+            ) else 1
 
         model = build_model(args)
         results = run_eval_cases(
@@ -184,7 +231,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0 if result.status == "success" else 1
 
 
-def build_model(args: argparse.Namespace) -> ScriptedModel | OpenAICodexModel:
+def build_model(args: argparse.Namespace) -> ModelAdapter:
+    if args.model_profile:
+        return resolve_model_profile(args.model_profile, args, Path(args.cwd).resolve()).build()
+
     if args.provider == "scripted":
         return ScriptedModel()
 
@@ -204,6 +254,60 @@ def build_model(args: argparse.Namespace) -> ScriptedModel | OpenAICodexModel:
         base_url=args.openai_base_url,
         model=args.openai_model,
     )
+
+
+def build_eval_profiles(
+    args: argparse.Namespace,
+    cwd: Path,
+) -> list[ModelProfile]:
+    if not args.model_profiles:
+        return [resolve_model_profile(args.model_profile or args.provider, args, cwd)]
+
+    try:
+        names = parse_profile_names(args.model_profiles)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return [resolve_model_profile(name, args, cwd) for name in names]
+
+
+def resolve_model_profile(
+    name: str,
+    args: argparse.Namespace,
+    cwd: Path,
+) -> ModelProfile:
+    config_profiles = _load_config_profiles_if_present(args.model_config, cwd)
+    if name in config_profiles:
+        return config_profiles[name]
+
+    if name == "scripted":
+        return ModelProfile(name="scripted", provider="scripted")
+    if name in {"openai", "openai-codex"}:
+        return ModelProfile(
+            name=name,
+            provider="openai-codex",
+            model=args.openai_model,
+            base_url=args.openai_base_url,
+            api_key_env=args.openai_api_key_env,
+        )
+
+    config_path = resolve_model_config_path(args.model_config, cwd)
+    raise SystemExit(
+        f"model profile {name!r} was not found in {config_path}. "
+        "Use --model-config or one of the built-in profiles: scripted, openai-codex."
+    )
+
+
+def _load_config_profiles_if_present(
+    config_path: str,
+    cwd: Path,
+) -> dict[str, ModelProfile]:
+    resolved = resolve_model_config_path(config_path, cwd)
+    if not resolved.exists():
+        return {}
+    try:
+        return load_model_profiles(resolved)
+    except ValueError as exc:
+        raise SystemExit(f"{resolved}: {exc}") from exc
 
 
 def load_dotenv_for_argv(argv: Sequence[str] | None = None) -> None:

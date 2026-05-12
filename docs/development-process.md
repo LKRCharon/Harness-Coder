@@ -708,3 +708,46 @@ Interview angle:
 This is a small but important eval-harness detail. Reliable evals need a fresh
 repo setup per case, otherwise pass/fail numbers silently depend on previous
 runs.
+
+## 0.5.0 Milestone
+
+### 30. Model Profiles Separate Runtime Config From Eval Logic
+
+Problem:
+Comparing models by manually changing CLI flags is hard to reproduce. It also
+makes reports ambiguous because a run says which provider was used, but not the
+named eval profile the candidate intended to compare.
+
+Decision:
+Add TOML model profiles. A profile stores provider, model name, base URL, API key
+environment variable name, timeout, and output-token budget. Secrets remain in
+the environment.
+
+Interview angle:
+This turns "I tried another model" into an auditable eval axis. The same task
+and fixture setup can now be run against named model profiles.
+
+### 31. Eval Matrix Is The Project's Strongest Demo Artifact
+
+Problem:
+A single successful bugfix is useful, but interviewers can still read it as a
+demo. The project needs a report shape that naturally invites deeper questions
+about runtime reliability and eval design.
+
+Decision:
+Add matrix mode:
+
+```bash
+python -m harnesscoder \
+  --model-profiles scripted,openai_codex \
+  --eval eval/bugfix_cases.json
+```
+
+The report compares pass rate, test pass rate, average tool calls, repeated
+reads, invalid tool calls, policy denials, tool failures, and failure
+categories. Every cell still points back to per-run traces.
+
+Interview angle:
+The differentiator is now visible: HarnessCoder is not just invoking a model to
+write code. It is measuring model behavior under the same tool policy, fixture
+setup, and replay metric pipeline.

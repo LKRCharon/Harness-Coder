@@ -20,9 +20,9 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.4.0` is a runnable local runtime with a real bugfix eval loop,
-trace replay, eval reporting, context governance, and checkpoint/resume support.
-It includes:
+Version `0.5.0` is a runnable local runtime with a real bugfix eval loop,
+trace replay, eval reporting, model-profile comparison, context governance, and
+checkpoint/resume support. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -40,6 +40,8 @@ It includes:
   renders a Markdown report.
 - Fixture-backed bugfix evals that copy a repo into
   `.harnesscoder/eval-workspaces/...` before editing it.
+- Model profiles and Markdown eval matrices for comparing the same cases across
+  providers.
 - CLI entrypoints:
 
 ```bash
@@ -158,6 +160,14 @@ Run the local smoke eval:
 python -m harnesscoder --eval eval/cases.json
 ```
 
+Run one named model profile:
+
+```bash
+python -m harnesscoder \
+  --model-profile scripted \
+  --eval eval/cases.json
+```
+
 Run the real bugfix loop with an OpenAI-compatible model:
 
 ```bash
@@ -176,10 +186,28 @@ python -m harnesscoder \
 eval runner copies it into an isolated `.harnesscoder/eval-workspaces/...`
 workspace before the agent edits files, so demo fixtures remain stable.
 
+Compare profiles with an eval matrix:
+
+```bash
+cp models.example.toml models.toml
+# Edit models.toml locally, then keep it out of git if it contains private endpoints.
+
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles scripted,openai_codex \
+  --eval eval/bugfix_cases.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/bugfix-matrix.md
+```
+
+The matrix report compares pass rate, test pass rate, average tool calls,
+repeated reads, invalid calls, policy denials, tool failures, and failure
+categories. Each profile/case run still keeps its own trace.
+
 Near-term TODOs:
 
 - Improve the TUI with streaming status, better history navigation, and trace
   inspection commands.
 - Use context packs directly in the live model prompt, not only in trace.
 - Add richer failure replay fixtures under `replay/`.
-- Compare the same closed loop across multiple model profiles.
+- Add token/cost accounting when providers return usage data.
