@@ -1,6 +1,9 @@
 [models.scripted]
 provider = "scripted"
 
+[models.hc_bench_oracle]
+provider = "hc-bench-oracle"
+
 [models.openai_codex]
 provider = "openai-codex"
 model = "your-codex-model-name"

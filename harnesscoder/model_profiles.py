@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import (
+    HCBenchOracleModel,
+    ModelAdapter,
+    OpenAICodexModel,
+    ScriptedModel,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +33,7 @@ class ModelProfile:
         timeout = _optional_int(record, "timeout", 60)
         max_output_tokens = _optional_int(record, "max_output_tokens", 1200)
 
-        if provider == "scripted":
+        if provider in {"scripted", "hc-bench-oracle"}:
             return cls(name=name, provider=provider)
         if provider == "openai-codex":
             return cls(
@@ -45,6 +50,9 @@ class ModelProfile:
     def build(self) -> ModelAdapter:
         if self.provider == "scripted":
             return ProfiledModel(self.name, ScriptedModel())
+
+        if self.provider == "hc-bench-oracle":
+            return ProfiledModel(self.name, HCBenchOracleModel())
 
         if self.provider == "openai-codex":
             api_key = os.environ.get(self.api_key_env)

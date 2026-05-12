@@ -20,9 +20,10 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.6.0` is a runnable local runtime with real bugfix and minimal
-greenfield eval loops, trace replay, eval reporting, model-profile comparison,
-context governance, and checkpoint/resume support. It includes:
+Version `0.7.0` is a runnable local runtime with real bugfix and minimal
+greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
+model-profile comparison, context governance, and checkpoint/resume support. It
+includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -47,6 +48,10 @@ context governance, and checkpoint/resume support. It includes:
   benchmark harnesses such as Pico.
 - Model profiles and Markdown eval matrices for comparing the same cases across
   providers.
+- HC-Bench-20: 20 fixture-backed cases across bugfix, recovery, greenfield,
+  context-governance, and policy/safety categories.
+- A deterministic `hc-bench-oracle` provider that proves the benchmark and
+  report pipeline are solvable before comparing real models.
 - CLI entrypoints:
 
 ```bash
@@ -54,6 +59,7 @@ python -m harnesscoder "看一下这个 repo 是做什么的"
 python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
 python -m harnesscoder --eval eval/cases.json
+python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json
 ```
 
 The scripted model currently performs a small repo-orientation pass: search for
@@ -225,6 +231,30 @@ The matrix report compares pass rate, test pass rate, verifier pass rate,
 average tool calls, repeated reads, invalid calls, policy denials, tool
 failures, and failure categories. Each profile/case run still keeps its own
 trace.
+
+Run HC-Bench-20 with the deterministic local oracle:
+
+```bash
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_20.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-20-oracle.md
+```
+
+HC-Bench-20 is the 0.7.0 interview benchmark. It contains 20 local cases:
+
+- 7 bugfix cases for business-like defects.
+- 3 recovery cases that require a failing test and a second fix.
+- 5 greenfield cases that create modules and tests through `write_file`.
+- 2 context cases that reward search-first, bounded reads in large files.
+- 3 policy cases for path traversal, command injection, and dangerous command
+  denial.
+
+The oracle is not a claim about model intelligence. It is a stable baseline for
+the harness itself: fixture isolation, policy gates, trace metrics, verifiers,
+and category-level reports. Real providers can be compared against the same
+suite through `--model-profiles`.
 
 Near-term TODOs:
 

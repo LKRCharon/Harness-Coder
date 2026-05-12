@@ -787,3 +787,53 @@ Interview angle:
 The project can now say: "I borrowed the right benchmark contract ideas, but the
 core artifact is still HarnessCoder's event-sourced run trace and comparable
 matrix report."
+
+## 0.7.0 Milestone
+
+### 34. HC-Bench-20 Turns The Demo Into A Benchmark
+
+Problem:
+0.6.0 proved bugfix and greenfield loops, but each loop had only one case. That
+was enough for a demo and not enough for an interview-ready eval story.
+
+Decision:
+Add `eval/hc_bench_20.json` with 20 fixture-backed local cases. The suite covers
+bugfix, recovery, greenfield, context, and policy categories. Each case declares
+allowed tools, a step budget, a focused test command, and a verifier that
+inspects the resulting trace.
+
+Interview angle:
+This shifts the conversation from "can the agent solve a toy task?" to "can the
+runtime compare model behavior across meaningful failure modes?"
+
+### 35. The Oracle Provider Is A Harness Baseline, Not A Model Baseline
+
+Problem:
+A 20-case benchmark needs a stable way to prove that failures come from the
+model/profile under test, not from broken fixtures or report plumbing.
+
+Decision:
+Add `hc-bench-oracle`, a deterministic provider backed by
+`harnesscoder/data/hc_bench_oracle.json`. It executes known-good actions for the
+HC-Bench cases and is used to validate the harness, reports, policy metrics, and
+trace verifiers.
+
+Interview angle:
+The oracle is intentionally not "the coding agent." It is the control arm. Real
+model profiles can be compared against it in the same matrix report.
+
+### 36. Reports Now Aggregate By Category
+
+Problem:
+Raw pass rate hides why an agent failed. For interview use, category-level
+signal is more valuable than a single aggregate number.
+
+Decision:
+Add category summaries to both normal eval reports and matrix reports. The
+report now breaks down pass rate, test pass rate, verifier pass rate, average
+tool calls, policy denials, and failure categories by benchmark category.
+
+Interview angle:
+This makes follow-up questions natural: "which models fail recovery tasks?",
+"does the agent over-read large files?", "are policy denials expected or
+regressions?"

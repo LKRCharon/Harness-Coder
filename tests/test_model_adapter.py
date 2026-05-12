@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 from harnesscoder.core.models import _model_action_from_payload
+from harnesscoder.core.state import AgentState
 
 
 class ModelAdapterNormalizationTests(unittest.TestCase):
@@ -39,6 +41,21 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
 
         self.assertEqual(action.kind, "finish")
         self.assertEqual(action.content, "All tests pass.")
+
+    def test_hc_bench_oracle_reads_case_id_from_task(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="[HC-Bench case: greenfield-slugify] Create slugify.",
+            cwd=".",
+            max_iterations=8,
+        )
+
+        action = hc_bench_oracle_action(state)
+
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "write_file")
 
 
 if __name__ == "__main__":

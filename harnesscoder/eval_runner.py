@@ -12,7 +12,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import (
+    HCBenchOracleModel,
+    ModelAdapter,
+    OpenAICodexModel,
+    ScriptedModel,
+)
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.model_profiles import ModelProfile
@@ -28,6 +33,7 @@ class _PreparedWorkspace:
 @dataclass(slots=True)
 class EvalCase:
     id: str
+    category: str
     task: str
     cwd: str
     test_command: str
@@ -42,6 +48,8 @@ class EvalCase:
     @classmethod
     def from_record(cls, record: dict[str, Any]) -> "EvalCase":
         case_id = _required_str(record, "id")
+        category = _optional_str(record, "category", "general")
+        assert category is not None
         task = _required_str(record, "task")
         cwd = _required_str(record, "cwd")
         test_command = _required_str(record, "test_command")
@@ -61,6 +69,7 @@ class EvalCase:
 
         return cls(
             id=case_id,
+            category=category,
             task=task,
             cwd=cwd,
             test_command=test_command,
@@ -77,6 +86,7 @@ class EvalCase:
 @dataclass(slots=True)
 class EvalResult:
     case_id: str
+    category: str
     task: str
     cwd: Path
     workspace_path: Path
@@ -197,7 +207,7 @@ def run_eval_cases(
         )
         run_result = runner.run(case.task)
         test_result = _run_test_command(case, case_cwd)
-        verifier_result = _run_verifier(case, case_cwd)
+        verifier_result = _run_verifier(case, case_cwd, run_result)
         test_passed, test_reason = _score_test_result(case, test_result)
         verifier_passed, verifier_reason = _score_verifier_result(
             case,
@@ -233,6 +243,7 @@ def run_eval_cases(
         results.append(
             EvalResult(
                 case_id=case.id,
+                category=case.category,
                 task=case.task,
                 cwd=case_cwd,
                 workspace_path=workspace.path,
@@ -316,6 +327,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     checkpoints = _sum_metric(results, "checkpoint_created_count")
     resume_rate = _average_nullable_metric(results, "resume_success_rate")
     failure_breakdown = Counter(result.failure_category for result in results)
+    category_breakdown = _category_summary(results)
     lines = [
         "# HarnessCoder Eval Report",
         "",
@@ -340,11 +352,44 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Resume success rate | {_format_nullable_rate(resume_rate)} |",
         f"| Failure category breakdown | {_format_breakdown(failure_breakdown)} |",
         "",
-        "## Runs",
+        "## Category Summary",
         "",
-        "| Case | Result | Agent | Test | Verifier | Failure | Workspace | Run | Tools |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | Failures |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
+    for category, category_results in category_breakdown.items():
+        category_total = len(category_results)
+        category_passed = sum(1 for result in category_results if result.passed)
+        category_test_passed = sum(1 for result in category_results if result.test_passed)
+        category_verifier_passed = sum(
+            1 for result in category_results if result.verifier_passed
+        )
+        category_failures = Counter(result.failure_category for result in category_results)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _md_cell(category),
+                    str(category_total),
+                    _format_rate(category_passed, category_total),
+                    _format_rate(category_test_passed, category_total),
+                    _format_rate(category_verifier_passed, category_total),
+                    _format_number(_average_metric(category_results, "average_tool_calls")),
+                    str(_sum_metric(category_results, "policy_denial_count")),
+                    _md_cell(_format_breakdown(category_failures)),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Runs",
+            "",
+            "| Case | Category | Result | Agent | Test | Verifier | Failure | Workspace | Run | Tools |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
 
     for result in results:
         status = "PASS" if result.passed else "FAIL"
@@ -359,6 +404,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
             + " | ".join(
                 [
                     _md_cell(result.case_id),
+                    _md_cell(result.category),
                     status,
                     _md_cell(result.runner_status),
                     _md_cell(test_status),
@@ -382,6 +428,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 f"### {result.case_id} - {status}",
                 "",
                 f"- Task: {_inline(result.task)}",
+                f"- Category: `{result.category}`",
                 f"- CWD: `{result.cwd}`",
                 f"- Workspace: `{result.workspace_path}`",
                 f"- Test command: `{result.test_command}`",
@@ -454,6 +501,48 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
     lines.extend(
         [
             "",
+            "## Category Summary",
+            "",
+            "| Profile | Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | Failure breakdown |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for profile_result in matrix:
+        for category, category_results in _category_summary(profile_result.results).items():
+            category_total = len(category_results)
+            category_passed = sum(1 for result in category_results if result.passed)
+            category_test_passed = sum(
+                1 for result in category_results if result.test_passed
+            )
+            category_verifier_passed = sum(
+                1 for result in category_results if result.verifier_passed
+            )
+            category_failures = Counter(
+                result.failure_category for result in category_results
+            )
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md_cell(profile_result.profile_name),
+                        _md_cell(category),
+                        str(category_total),
+                        _format_rate(category_passed, category_total),
+                        _format_rate(category_test_passed, category_total),
+                        _format_rate(category_verifier_passed, category_total),
+                        _format_number(
+                            _average_metric(category_results, "average_tool_calls")
+                        ),
+                        str(_sum_metric(category_results, "policy_denial_count")),
+                        _md_cell(_format_breakdown(category_failures)),
+                    ]
+                )
+                + " |"
+            )
+
+    lines.extend(
+        [
+            "",
             "## Case Matrix",
             "",
             "| Case | " + " | ".join(_md_cell(item.profile_name) for item in matrix) + " |",
@@ -486,8 +575,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 "",
                 f"### {profile_result.profile_name}",
                 "",
-                "| Case | Result | Agent | Test | Verifier | Failure | Trace | Tools |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| Case | Category | Result | Agent | Test | Verifier | Failure | Trace | Tools |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for result in profile_result.results:
@@ -503,6 +592,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 + " | ".join(
                     [
                         _md_cell(result.case_id),
+                        _md_cell(result.category),
                         status,
                         _md_cell(result.runner_status),
                         _md_cell(test_status),
@@ -610,13 +700,32 @@ def _run_test_command(case: EvalCase, cwd: Path) -> _CommandResult:
     return _run_command_for_eval(case.test_command, cwd, case.timeout)
 
 
-def _run_verifier(case: EvalCase, cwd: Path) -> _CommandResult | None:
+def _run_verifier(
+    case: EvalCase,
+    cwd: Path,
+    run_result: "RunResult",
+) -> _CommandResult | None:
     if case.verifier is None:
         return None
-    return _run_command_for_eval(case.verifier, cwd, case.timeout)
+    return _run_command_for_eval(
+        case.verifier,
+        cwd,
+        case.timeout,
+        extra_env={
+            "HARNESSCODER_TRACE_PATH": str(run_result.trace_path),
+            "HARNESSCODER_RUN_ID": run_result.run_id,
+            "HARNESSCODER_RUN_STATUS": run_result.status,
+        },
+    )
 
 
-def _run_command_for_eval(command: str, cwd: Path, timeout: int) -> _CommandResult:
+def _run_command_for_eval(
+    command: str,
+    cwd: Path,
+    timeout: int,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> _CommandResult:
     started = time.monotonic()
     try:
         parts = shlex.split(command)
@@ -638,7 +747,7 @@ def _run_command_for_eval(command: str, cwd: Path, timeout: int) -> _CommandResu
             duration_seconds=time.monotonic() - started,
         )
 
-    env = {**os.environ, "PYTHONUTF8": "1"}
+    env = {**os.environ, "PYTHONUTF8": "1", **(extra_env or {})}
     try:
         completed = subprocess.run(
             parts,
@@ -750,6 +859,9 @@ def _score_verifier_result(
 def _build_model(provider: str) -> ModelAdapter:
     if provider == "scripted":
         return ScriptedModel()
+
+    if provider == "hc-bench-oracle":
+        return HCBenchOracleModel()
 
     if provider == "openai-codex":
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -923,6 +1035,13 @@ def _failure_category_from_summary(summary: dict[str, Any]) -> str:
         if isinstance(category, str) and category:
             return category
     return "incomplete"
+
+
+def _category_summary(results: list[EvalResult]) -> dict[str, list[EvalResult]]:
+    grouped: dict[str, list[EvalResult]] = {}
+    for result in results:
+        grouped.setdefault(result.category, []).append(result)
+    return grouped
 
 
 def _case_ids_from_matrix(matrix: list[EvalMatrixProfileResult]) -> list[str]:

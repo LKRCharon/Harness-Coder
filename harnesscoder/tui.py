@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from harnesscoder.core.models import OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import HCBenchOracleModel, OpenAICodexModel, ScriptedModel
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.core.tools import ToolRegistry
@@ -283,7 +283,7 @@ class HarnessCoderTui:
                         "/help - show this help",
                         "/status - show cwd/provider/model",
                         "/clear - clear the message pane",
-                        "/provider [scripted|openai-codex] - show or change provider",
+                        "/provider [scripted|hc-bench-oracle|openai-codex] - show or change provider",
                         "/model [name|scripted] - show or change model",
                         "/base-url [url] - show or change OpenAI-compatible base URL",
                         "/cwd [path] - show or change repository cwd",
@@ -327,8 +327,13 @@ class HarnessCoderTui:
             self.messages.append(Message("system", f"provider: {self.config.provider}"))
             return
         provider = args[0]
-        if provider not in {"scripted", "openai-codex"}:
-            self.messages.append(Message("error", "Provider must be scripted or openai-codex."))
+        if provider not in {"scripted", "hc-bench-oracle", "openai-codex"}:
+            self.messages.append(
+                Message(
+                    "error",
+                    "Provider must be scripted, hc-bench-oracle, or openai-codex.",
+                )
+            )
             return
         self.config.provider = provider
         self.messages.append(Message("system", f"provider set to {provider}"))
@@ -344,6 +349,11 @@ class HarnessCoderTui:
             self.config.provider = "scripted"
             self.config.openai_model = None
             self.messages.append(Message("system", "model set to scripted"))
+            return
+        if model == "hc-bench-oracle":
+            self.config.provider = "hc-bench-oracle"
+            self.config.openai_model = None
+            self.messages.append(Message("system", "model set to hc-bench-oracle"))
             return
         self.config.provider = "openai-codex"
         self.config.openai_model = model
@@ -547,9 +557,11 @@ class HarnessCoderTui:
                 lines.append(f"- {event_type}")
         return "\n".join(lines)
 
-    def _build_model(self) -> ScriptedModel | OpenAICodexModel:
+    def _build_model(self) -> ScriptedModel | HCBenchOracleModel | OpenAICodexModel:
         if self.config.provider == "scripted":
             return ScriptedModel()
+        if self.config.provider == "hc-bench-oracle":
+            return HCBenchOracleModel()
 
         api_key = os.environ.get(self.config.openai_api_key_env)
         if not api_key:

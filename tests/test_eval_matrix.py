@@ -22,6 +22,8 @@ class EvalMatrixTests(unittest.TestCase):
             config.write_text(
                 "[models.scripted]\n"
                 'provider = "scripted"\n\n'
+                "[models.oracle]\n"
+                'provider = "hc-bench-oracle"\n\n'
                 "[models.gpt]\n"
                 'provider = "openai-codex"\n'
                 'model = "gpt-test"\n'
@@ -32,8 +34,9 @@ class EvalMatrixTests(unittest.TestCase):
 
             profiles = load_model_profiles(config)
 
-        self.assertEqual(sorted(profiles), ["gpt", "scripted"])
+        self.assertEqual(sorted(profiles), ["gpt", "oracle", "scripted"])
         self.assertEqual(profiles["scripted"].provider, "scripted")
+        self.assertEqual(profiles["oracle"].provider, "hc-bench-oracle")
         self.assertEqual(profiles["gpt"].provider, "openai-codex")
         self.assertEqual(profiles["gpt"].model, "gpt-test")
 

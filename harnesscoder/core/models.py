@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from harnesscoder.core.state import AgentState, ModelAction
+from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 
 
 MODEL_TOOL_NAMES = (
@@ -89,6 +90,23 @@ class ScriptedModel:
             )
             parts.append(f"Current files include: {files}.")
         return " ".join(parts)
+
+
+class HCBenchOracleModel:
+    """Deterministic model for exercising the local HC-Bench fixture suite.
+
+    The oracle is intentionally boring: it is a stable local baseline that proves
+    the eval harness, policy layer, traces, and reports work across all cases.
+    Real model profiles can then run the same cases for capability comparison.
+    """
+
+    name = "hc-bench-oracle"
+
+    def next_action(self, state: AgentState) -> ModelAction:
+        action = hc_bench_oracle_action(state)
+        if action is not None:
+            return action
+        return ScriptedModel().next_action(state)
 
 
 @dataclass(slots=True)

@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Sequence
 
 from harnesscoder import __version__
-from harnesscoder.core.models import ModelAdapter, OpenAICodexModel, ScriptedModel
+from harnesscoder.core.models import (
+    HCBenchOracleModel,
+    ModelAdapter,
+    OpenAICodexModel,
+    ScriptedModel,
+)
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.model_profiles import (
     ModelProfile,
@@ -88,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider",
-        choices=["scripted", "openai-codex"],
+        choices=["scripted", "hc-bench-oracle", "openai-codex"],
         default=os.environ.get("HARNESSCODER_MODEL_PROVIDER", "scripted"),
         help="Model provider. Defaults to scripted.",
     )
@@ -238,6 +243,9 @@ def build_model(args: argparse.Namespace) -> ModelAdapter:
     if args.provider == "scripted":
         return ScriptedModel()
 
+    if args.provider == "hc-bench-oracle":
+        return HCBenchOracleModel()
+
     api_key = os.environ.get(args.openai_api_key_env)
     if not api_key:
         raise SystemExit(
@@ -281,6 +289,8 @@ def resolve_model_profile(
 
     if name == "scripted":
         return ModelProfile(name="scripted", provider="scripted")
+    if name == "hc-bench-oracle":
+        return ModelProfile(name="hc-bench-oracle", provider="hc-bench-oracle")
     if name in {"openai", "openai-codex"}:
         return ModelProfile(
             name=name,
@@ -293,7 +303,8 @@ def resolve_model_profile(
     config_path = resolve_model_config_path(args.model_config, cwd)
     raise SystemExit(
         f"model profile {name!r} was not found in {config_path}. "
-        "Use --model-config or one of the built-in profiles: scripted, openai-codex."
+        "Use --model-config or one of the built-in profiles: scripted, "
+        "hc-bench-oracle, openai-codex."
     )
 
 
