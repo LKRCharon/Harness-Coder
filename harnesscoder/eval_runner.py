@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import json
 import os
+import shutil
 import shlex
 import subprocess
 import time
@@ -16,6 +17,12 @@ from harnesscoder.core.runner import AgentRunner
 from harnesscoder.replay import summarize_trace
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedWorkspace:
+    path: Path
+    run_root: Path
+
+
 @dataclass(slots=True)
 class EvalCase:
     id: str
@@ -23,6 +30,7 @@ class EvalCase:
     cwd: str
     test_command: str
     timeout: int
+    repo_fixture: str | None = None
     success_contains: str | tuple[str, ...] | None = None
     success_returncode: int | None = None
 
@@ -33,6 +41,7 @@ class EvalCase:
         cwd = _required_str(record, "cwd")
         test_command = _required_str(record, "test_command")
         timeout = _required_int(record, "timeout")
+        repo_fixture = _optional_str(record, "repo_fixture", None)
         success_contains = _success_contains(record.get("success_contains"))
         success_returncode = _optional_int(record, "success_returncode", None)
 
@@ -48,6 +57,7 @@ class EvalCase:
             cwd=cwd,
             test_command=test_command,
             timeout=timeout,
+            repo_fixture=repo_fixture,
             success_contains=success_contains,
             success_returncode=success_returncode,
         )
@@ -58,6 +68,7 @@ class EvalResult:
     case_id: str
     task: str
     cwd: Path
+    workspace_path: Path
     passed: bool
     reason: str
     run_id: str
@@ -102,6 +113,34 @@ def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
     return cases
 
 
+def _prepare_case_workspace(
+    *,
+    case: EvalCase,
+    workspace_root: Path,
+    cases_path: Path,
+) -> _PreparedWorkspace:
+    if case.repo_fixture is None:
+        return _PreparedWorkspace(path=workspace_root, run_root=workspace_root)
+
+    fixture = _resolve_fixture_path(case.repo_fixture, workspace_root, cases_path)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    destination = (
+        workspace_root
+        / ".harnesscoder"
+        / "eval-workspaces"
+        / _safe_path_segment(case.id)
+        / timestamp
+        / "repo"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        fixture,
+        destination,
+        ignore=shutil.ignore_patterns(".git", ".harnesscoder", "__pycache__"),
+    )
+    return _PreparedWorkspace(path=destination, run_root=destination)
+
+
 def run_eval_cases(
     cases_path: str | Path,
     workspace_root: str | Path,
@@ -117,7 +156,12 @@ def run_eval_cases(
 
     results: list[EvalResult] = []
     for case in cases:
-        case_cwd = _resolve_inside(root, case.cwd)
+        workspace = _prepare_case_workspace(
+            case=case,
+            workspace_root=root,
+            cases_path=resolved_cases_path,
+        )
+        case_cwd = _resolve_inside(workspace.run_root, case.cwd)
         runner = AgentRunner(
             model=model or _build_model(provider),
             cwd=case_cwd,
@@ -145,6 +189,7 @@ def run_eval_cases(
                 case_id=case.id,
                 task=case.task,
                 cwd=case_cwd,
+                workspace_path=workspace.path,
                 passed=passed,
                 reason=reason,
                 run_id=run_result.run_id,
@@ -208,8 +253,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         "",
         "## Runs",
         "",
-        "| Case | Result | Agent | Test | Failure | Run | Tools |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Case | Result | Agent | Test | Failure | Workspace | Run | Tools |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for result in results:
@@ -228,6 +273,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     _md_cell(result.runner_status),
                     _md_cell(test_status),
                     _md_cell(result.failure_category),
+                    _md_cell(str(result.workspace_path)),
                     _md_cell(f"{result.run_id}<br>{result.trace_path}"),
                     _md_cell(_format_tool_counts(result.tool_counts)),
                 ]
@@ -246,6 +292,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 "",
                 f"- Task: {_inline(result.task)}",
                 f"- CWD: `{result.cwd}`",
+                f"- Workspace: `{result.workspace_path}`",
                 f"- Test command: `{result.test_command}`",
                 f"- Reason: {result.reason}",
                 f"- Failure category: `{result.failure_category}`",
@@ -467,6 +514,28 @@ def _resolve_cases_path(cases_path: str | Path, workspace_root: Path) -> Path:
     return (workspace_root / path).resolve()
 
 
+def _resolve_fixture_path(
+    repo_fixture: str,
+    workspace_root: Path,
+    cases_path: Path,
+) -> Path:
+    raw_path = Path(repo_fixture)
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.append(workspace_root / raw_path)
+        candidates.append(cases_path.parent / raw_path)
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.exists() and resolved.is_dir():
+            return resolved
+
+    searched = ", ".join(str(candidate.resolve()) for candidate in candidates)
+    raise ValueError(f"repo_fixture does not exist or is not a directory: {searched}")
+
+
 def _resolve_inside(root: Path, path: str) -> Path:
     target = (root / path).resolve()
     try:
@@ -480,8 +549,29 @@ def _resolve_inside(root: Path, path: str) -> Path:
     return target
 
 
+def _safe_path_segment(value: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "-"
+        for char in value
+    )
+    return cleaned.strip(".-") or "case"
+
+
 def _required_str(record: dict[str, Any], key: str) -> str:
     value = record.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"eval case field {key!r} must be a non-empty string")
+    return value
+
+
+def _optional_str(
+    record: dict[str, Any],
+    key: str,
+    default: str | None,
+) -> str | None:
+    value = record.get(key, default)
+    if value is None:
+        return None
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"eval case field {key!r} must be a non-empty string")
     return value

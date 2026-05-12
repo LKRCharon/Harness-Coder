@@ -667,3 +667,44 @@ tool calls, context packs, and checkpoints.
 
 Interview angle:
 Replay is now the source of truth for both debugging and scoring.
+
+## 0.4.0 Milestone
+
+### 28. Real Bugfix Loop, Not Only Repo Orientation
+
+Problem:
+Earlier releases could inspect a repo, write traces, replay failures, and score
+evals, but the strongest interview proof still requires a concrete code-change
+loop: failing test, diagnosis, edit, rerun, pass.
+
+Decision:
+Add `examples/bugfix_demo/repo`, a tiny Python fixture where
+`math_utils.add_one` returns the wrong value. `eval/bugfix_cases.json` asks a
+real model to fix the failing unittest, run `python -m unittest discover`, and
+finish only after tests pass.
+
+Interview angle:
+This is the first "agent generated code under harness control" milestone. The
+project can now show `run_tests -> search/read -> edit_file -> run_tests ->
+finish` in a replayable trace.
+
+### 29. Fixture Evals Run In Copied Workspaces
+
+Problem:
+If evals edit fixture directories directly, the first successful bugfix destroys
+the failing baseline and makes the demo non-reproducible.
+
+Decision:
+Add optional `repo_fixture` support to eval cases. When present, the eval runner
+copies the fixture into:
+
+```text
+.harnesscoder/eval-workspaces/<case_id>/<timestamp>/repo
+```
+
+and runs the agent there. Reports include the copied workspace path and trace.
+
+Interview angle:
+This is a small but important eval-harness detail. Reliable evals need a fresh
+repo setup per case, otherwise pass/fail numbers silently depend on previous
+runs.

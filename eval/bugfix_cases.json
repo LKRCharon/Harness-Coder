@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {
+      "id": "bugfix-add-one",
+      "task": "Fix the failing unittest. Inspect the repository, identify the bug, edit the smallest source change, run tests with python -m unittest discover, and finish only after tests pass.",
+      "repo_fixture": "examples/bugfix_demo/repo",
+      "cwd": ".",
+      "test_command": "python -m unittest discover",
+      "success_returncode": 0,
+      "timeout": 30
+    }
+  ]
+}

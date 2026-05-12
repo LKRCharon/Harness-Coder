@@ -20,8 +20,9 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.3.0` is a runnable local runtime with trace replay, eval reporting,
-context governance, and checkpoint/resume support. It includes:
+Version `0.4.0` is a runnable local runtime with a real bugfix eval loop,
+trace replay, eval reporting, context governance, and checkpoint/resume support.
+It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -37,6 +38,8 @@ context governance, and checkpoint/resume support. It includes:
 - Trace replay summaries through `python -m harnesscoder.replay`.
 - A minimal eval harness that runs cases, executes tests, scores results, and
   renders a Markdown report.
+- Fixture-backed bugfix evals that copy a repo into
+  `.harnesscoder/eval-workspaces/...` before editing it.
 - CLI entrypoints:
 
 ```bash
@@ -155,11 +158,28 @@ Run the local smoke eval:
 python -m harnesscoder --eval eval/cases.json
 ```
 
+Run the real bugfix loop with an OpenAI-compatible model:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export HARNESSCODER_OPENAI_BASE_URL="https://your-openai-compatible-endpoint.example/v1"
+export HARNESSCODER_OPENAI_MODEL="your-codex-model-name"
+
+python -m harnesscoder \
+  --provider openai-codex \
+  --eval eval/bugfix_cases.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/bugfix-demo.md
+```
+
+`eval/bugfix_cases.json` uses `examples/bugfix_demo/repo` as a fixture. The
+eval runner copies it into an isolated `.harnesscoder/eval-workspaces/...`
+workspace before the agent edits files, so demo fixtures remain stable.
+
 Near-term TODOs:
 
 - Improve the TUI with streaming status, better history navigation, and trace
   inspection commands.
-- Live-test and harden the OpenAI-compatible model adapter against real traffic.
 - Use context packs directly in the live model prompt, not only in trace.
 - Add richer failure replay fixtures under `replay/`.
-- Add bug-fix eval cases that exercise `edit_file` with real failing tests.
+- Compare the same closed loop across multiple model profiles.
