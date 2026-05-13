@@ -19,6 +19,7 @@ from harnesscoder.core.models import (
     ScriptedModel,
 )
 from harnesscoder.core.policy import ToolPolicy
+from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
 from harnesscoder.core.tools import ToolRegistry
 
@@ -36,6 +37,7 @@ class TuiConfig:
     openai_model: str | None
     openai_api_key_env: str
     max_iterations: int
+    context_mode: ContextMode = "none"
     repo_map_mode: RepoMapMode = "auto"
 
 
@@ -302,6 +304,7 @@ class HarnessCoderTui:
                 cwd=active.config.cwd,
                 trace_root=active.config.trace_root,
                 max_iterations=active.config.max_iterations,
+                context_mode=active.config.context_mode,
                 repo_map_mode=active.config.repo_map_mode,
             )
             result = runner.run(active.prompt)
@@ -365,6 +368,7 @@ class HarnessCoderTui:
             openai_model=self.config.openai_model,
             openai_api_key_env=self.config.openai_api_key_env,
             max_iterations=self.config.max_iterations,
+            context_mode=self.config.context_mode,
             repo_map_mode=self.config.repo_map_mode,
         )
 
@@ -508,6 +512,7 @@ class HarnessCoderTui:
                         f"model: {self.config.openai_model or '-'}",
                         f"base_url: {self.config.openai_base_url}",
                         f"max_iterations: {self.config.max_iterations}",
+                        f"context_mode: {self.config.context_mode}",
                         f"repo_map_mode: {self.config.repo_map_mode}",
                         f"trace_root: {self.config.trace_root}",
                     ]

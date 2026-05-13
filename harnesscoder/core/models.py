@@ -246,7 +246,7 @@ Allowed tool action:
 {
   "kind": "tool",
   "rationale": "why this tool call is the next useful step",
-  "tool_name": "read_file | search_code | write_file | edit_file | run_tests | run_command",
+  "tool_name": "read_file | search_code | repo_map | write_file | edit_file | run_tests | run_command",
   "tool_args": {}
 }
 

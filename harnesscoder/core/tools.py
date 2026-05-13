@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -16,6 +17,34 @@ from harnesscoder.core.repo_map import RepoMapCache
 MAX_TOOL_OUTPUT = 16_000
 DEFAULT_TEST_COMMAND = "python -m unittest discover"
 MAX_COMMAND_TIMEOUT = 120
+SENSITIVE_FILE_NAMES = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".envrc",
+    "models.toml",
+}
+SENSITIVE_FILE_SUFFIXES = (".key", ".pem", ".p12", ".pfx", ".sqlite", ".db")
+SENSITIVE_ENV_MARKERS = (
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "AUTHORIZATION",
+    "CREDENTIAL",
+    "PRIVATE_KEY",
+)
+IGNORED_SEARCH_DIRS = {
+    ".git",
+    ".harnesscoder",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+}
 
 
 @dataclass(slots=True)
@@ -93,6 +122,14 @@ class ToolRegistry:
     ) -> ToolResult:
         tool_name = "read_file"
         target = self._resolve_workspace_path(path)
+        if _is_sensitive_workspace_path(target, self.cwd):
+            return ToolResult(
+                call_id,
+                tool_name,
+                False,
+                "",
+                f"refusing to read sensitive local file: {path}",
+            )
         if not target.exists():
             return ToolResult(call_id, tool_name, False, "", f"file not found: {path}")
         if not target.is_file():
@@ -135,11 +172,32 @@ class ToolRegistry:
             cmd = [
                 "rg",
                 "-n",
+                "--fixed-strings",
                 "--hidden",
                 "--glob",
                 "!.git/**",
                 "--glob",
                 "!.harnesscoder/**",
+                "--glob",
+                "!**/.env",
+                "--glob",
+                "!**/.env.*",
+                "--glob",
+                "!**/.envrc",
+                "--glob",
+                "!**/models.toml",
+                "--glob",
+                "!**/*.key",
+                "--glob",
+                "!**/*.pem",
+                "--glob",
+                "!**/*.p12",
+                "--glob",
+                "!**/*.pfx",
+                "--glob",
+                "!**/*.sqlite",
+                "--glob",
+                "!**/*.db",
                 query,
                 str(target.relative_to(self.cwd)),
             ]
@@ -498,11 +556,12 @@ class ToolRegistry:
     ) -> ToolResult:
         timeout = max(1, min(int(timeout), MAX_COMMAND_TIMEOUT))
 
-        env = {
-            **os.environ,
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONUTF8": "1",
-        }
+        env = safe_subprocess_env(
+            {
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONUTF8": "1",
+            }
+        )
         started = time.monotonic()
         try:
             completed = subprocess.run(
@@ -518,7 +577,7 @@ class ToolRegistry:
             return ToolResult(call_id, tool_name, False, "", f"command not found: {parts[0]}")
         except subprocess.TimeoutExpired as exc:
             duration_seconds = time.monotonic() - started
-            output = (exc.stdout or "") + (exc.stderr or "")
+            output = redact_sensitive_text((exc.stdout or "") + (exc.stderr or ""))
             return ToolResult(
                 call_id,
                 tool_name,
@@ -535,6 +594,7 @@ class ToolRegistry:
 
         duration_seconds = time.monotonic() - started
         combined = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+        combined = redact_sensitive_text(combined)
         return ToolResult(
             call_id=call_id,
             tool_name=tool_name,
@@ -561,7 +621,7 @@ class ToolRegistry:
         for candidate in roots:
             if candidate.is_dir():
                 continue
-            if ".git" in candidate.parts or ".harnesscoder" in candidate.parts:
+            if _is_ignored_search_path(candidate, self.cwd):
                 continue
             try:
                 text = candidate.read_text(encoding="utf-8", errors="replace")
@@ -601,3 +661,67 @@ def _truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+
+
+def safe_subprocess_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not is_sensitive_env_name(key)
+    }
+    if extra_env:
+        for key, value in extra_env.items():
+            if not is_sensitive_env_name(key):
+                env[key] = value
+    return env
+
+
+def redact_sensitive_text(text: str) -> str:
+    redacted = text
+    for key, value in os.environ.items():
+        if not is_sensitive_env_name(key) or len(value) < 4:
+            continue
+        redacted = redacted.replace(value, "[REDACTED]")
+    redacted = re.sub(
+        r"(?i)\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION|CREDENTIAL|PRIVATE[_-]?KEY)[A-Z0-9_]*)=([^\s]+)",
+        r"\1=[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+        "Bearer [REDACTED]",
+        redacted,
+    )
+    return redacted
+
+
+def is_sensitive_env_name(name: str) -> bool:
+    upper = name.upper().replace("-", "_")
+    return any(marker in upper for marker in SENSITIVE_ENV_MARKERS)
+
+
+def _is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:
+    try:
+        rel = path.relative_to(cwd)
+    except ValueError:
+        return True
+    for part in rel.parts:
+        if part in SENSITIVE_FILE_NAMES or part.startswith(".env."):
+            return True
+    return path.name.endswith(SENSITIVE_FILE_SUFFIXES)
+
+
+def _is_ignored_search_path(path: Path, cwd: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        rel = path.relative_to(cwd)
+    except ValueError:
+        return True
+    try:
+        path.resolve().relative_to(cwd.resolve())
+    except (OSError, ValueError):
+        return True
+    if any(part in IGNORED_SEARCH_DIRS for part in rel.parts):
+        return True
+    return _is_sensitive_workspace_path(path, cwd)

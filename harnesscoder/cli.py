@@ -224,6 +224,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.tui:
         from harnesscoder.tui import TuiConfig, run_tui
 
+        if args.model_profile:
+            raise SystemExit(
+                "--model-profile is not supported with --tui yet; use --provider, "
+                "--openai-model, --openai-base-url, and --openai-api-key-env instead."
+            )
         return run_tui(
             TuiConfig(
                 cwd=cwd,
@@ -233,6 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 openai_model=args.openai_model,
                 openai_api_key_env=args.openai_api_key_env,
                 max_iterations=args.max_iterations,
+                context_mode=args.context_mode,
                 repo_map_mode=args.repo_map_mode,
             ),
             initial_message=task or None,

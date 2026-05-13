@@ -66,7 +66,11 @@ def assemble_context(
     if context_mode not in {"none", "pack", "memory"}:
         raise ValueError(f"unsupported context mode: {context_mode}")
 
-    recent_observations = _recent_observations(state)
+    recent_observations = (
+        _recent_observations(state)
+        if context_mode == "none"
+        else []
+    )
     task_contract = {
         "task": state.task,
         "cwd": state.cwd,

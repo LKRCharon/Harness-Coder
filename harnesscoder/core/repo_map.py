@@ -118,12 +118,13 @@ def build_repo_map(
 def _snapshot_repo(cwd: Path) -> tuple[tuple[str, int, int], ...]:
     rows: list[tuple[str, int, int]] = []
     for path in sorted(cwd.rglob("*")):
-        if not path.is_file() or _is_ignored(path, cwd):
+        if path.is_symlink() or not path.is_file() or _is_ignored(path, cwd):
             continue
         try:
+            path.resolve().relative_to(cwd.resolve())
             stat = path.stat()
             rel = path.relative_to(cwd).as_posix()
-        except OSError:
+        except (OSError, ValueError):
             continue
         rows.append((rel, stat.st_mtime_ns, stat.st_size))
     return tuple(rows)

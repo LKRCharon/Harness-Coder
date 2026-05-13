@@ -6,13 +6,14 @@ from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 from harnesscoder.core.context import build_context_pack
 from harnesscoder.core.models import (
     MODEL_SYSTEM_PROMPT,
+    MODEL_TOOL_NAMES,
     OpenAIChatModel,
     OpenAICodexModel,
     _extract_response_text,
     _model_action_from_payload,
 )
 from harnesscoder.core.prompt import assemble_context
-from harnesscoder.core.state import AgentState
+from harnesscoder.core.state import AgentState, ToolObservation
 
 
 class ModelAdapterNormalizationTests(unittest.TestCase):
@@ -118,6 +119,35 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("task/verified_facts", context.working_memory)
         self.assertIn("tests passed once", context.working_memory)
 
+    def test_pack_context_does_not_duplicate_recent_observations(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        state.observations.append(
+            ToolObservation(
+                call_id="call_1",
+                tool_name="read_file",
+                ok=True,
+                output="important output",
+                metadata={"path": "README.md"},
+            )
+        )
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+        payload = context.to_model_input()[1]["content"]
+
+        self.assertIn("important output", payload)
+        self.assertEqual(payload.count("important output"), 1)
+
     def test_openai_chat_payload_uses_chat_completions_shape(self) -> None:
         state = AgentState(
             run_id="run_test",
@@ -161,6 +191,10 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         )
 
         self.assertIn('"kind":"finish"', text)
+
+    def test_system_prompt_lists_every_runtime_tool(self) -> None:
+        for tool_name in MODEL_TOOL_NAMES:
+            self.assertIn(tool_name, MODEL_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

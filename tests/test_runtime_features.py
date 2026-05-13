@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.core.state import AgentState, ModelAction
-from harnesscoder.core.tools import ToolRegistry
+from harnesscoder.core.tools import ToolRegistry, redact_sensitive_text, safe_subprocess_env
 from harnesscoder.eval_runner import load_eval_cases, render_markdown_report
 from harnesscoder.replay import reconstruct_state_from_trace, summarize_trace
 
@@ -113,6 +114,85 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn(".env", result.text)
         self.assertEqual(result.metadata["files_indexed"], 1)
 
+    def test_repo_map_skips_symlinks_that_escape_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            outside = Path(tmp) / "outside_secret.py"
+            root.mkdir()
+            outside.write_text("def leaked_symbol():\n    return 'secret'\n", encoding="utf-8")
+            (root / "app.py").write_text("def visible_symbol():\n    return 1\n", encoding="utf-8")
+            try:
+                (root / "linked_secret.py").symlink_to(outside)
+            except OSError:
+                self.skipTest("symlinks are not supported on this filesystem")
+
+            result = build_repo_map(root, query="symbol leaked visible", max_tokens=600)
+
+        self.assertIn("app.py", result.text)
+        self.assertIn("visible_symbol", result.text)
+        self.assertNotIn("linked_secret.py", result.text)
+        self.assertNotIn("leaked_symbol", result.text)
+
+    def test_file_tools_do_not_expose_local_secret_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text("DEEPSEEK_API_KEY=secret-value\n", encoding="utf-8")
+            (root / "models.toml").write_text(
+                "[models.local]\napi_key = 'secret-value'\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text("TOKEN_NAME = 'public symbol'\n", encoding="utf-8")
+            registry = ToolRegistry(root)
+
+            read_env = registry.read_file(call_id="call_read_env", path=".env")
+            search = registry.search_code(call_id="call_search", query="secret-value", path=".")
+
+        self.assertFalse(read_env.ok)
+        self.assertIn("sensitive local file", read_env.error or "")
+        self.assertTrue(search.ok, search.error)
+        self.assertNotIn("secret-value", search.output)
+        self.assertNotIn("DEEPSEEK_API_KEY", search.output)
+        self.assertNotIn("models.toml", search.output)
+
+    def test_subprocess_env_helpers_drop_and_redact_sensitive_values(self) -> None:
+        previous = os.environ.get("HARNESSCODER_TEST_API_KEY")
+        os.environ["HARNESSCODER_TEST_API_KEY"] = "secret-value-123"
+        try:
+            env = safe_subprocess_env({"PYTHONUTF8": "1"})
+            redacted = redact_sensitive_text(
+                "leaked=secret-value-123\nDEEPSEEK_API_KEY=hardcoded-value\n"
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("HARNESSCODER_TEST_API_KEY", None)
+            else:
+                os.environ["HARNESSCODER_TEST_API_KEY"] = previous
+
+        self.assertNotIn("HARNESSCODER_TEST_API_KEY", env)
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertNotIn("secret-value-123", redacted)
+        self.assertIn("DEEPSEEK_API_KEY=[REDACTED]", redacted)
+
+    def test_search_code_treats_query_as_literal_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "sample.py").write_text(
+                "def lookup(value):\n"
+                "    return mapping[value]\n"
+                "needle = 'foo(bar)[baz].txt'\n",
+                encoding="utf-8",
+            )
+            registry = ToolRegistry(root)
+
+            result = registry.search_code(
+                call_id="call_search_literal",
+                query="foo(bar)[baz].txt",
+                path=".",
+            )
+
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("sample.py", result.output)
+
 
 class PolicyTests(unittest.TestCase):
     def test_allowed_tools_can_scope_a_run(self) -> None:
@@ -151,6 +231,32 @@ class PolicyTests(unittest.TestCase):
             Path.cwd(),
         )
         self.assertFalse(decision.allowed)
+
+    def test_read_file_policy_rejects_sensitive_local_files(self) -> None:
+        policy = ToolPolicy()
+        root = Path.cwd()
+
+        for path in (".env", ".env.local", "models.toml", "keys/private.pem"):
+            decision = policy.check("read_file", {"path": path}, root)
+            self.assertFalse(decision.allowed, path)
+
+    def test_run_command_policy_is_allowlisted_and_blocks_secret_bypasses(self) -> None:
+        policy = ToolPolicy()
+        root = Path.cwd()
+        allowed = policy.check("run_command", {"cmd": "find . -maxdepth 1 -type f"}, root)
+        self.assertTrue(allowed.allowed, allowed.reason)
+
+        for command in (
+            "env",
+            "printenv",
+            "cat .env",
+            "python -c 'print(1)'",
+            "find .env -maxdepth 1",
+            "find keys/private.pem -maxdepth 1",
+            "find . -exec cat README.md {}",
+        ):
+            decision = policy.check("run_command", {"cmd": command}, root)
+            self.assertFalse(decision.allowed, command)
 
     def test_repo_map_policy_is_read_only_and_bounded(self) -> None:
         policy = ToolPolicy()

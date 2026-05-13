@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from harnesscoder.core.tools import SENSITIVE_FILE_NAMES, SENSITIVE_FILE_SUFFIXES
+
 
 @dataclass(slots=True)
 class PolicyDecision:
@@ -49,6 +51,9 @@ class ToolPolicy:
         "show",
         "status",
     }
+    _allowed_run_commands = {"find", "ls", "pwd", "wc"}
+    _blocked_run_command_options = {"-exec", "-execdir", "-delete"}
+    _blocked_env_commands = {"env", "printenv"}
     _allowed_test_modules = {"pytest", "unittest"}
     _allowed_test_commands = {"py.test", "pytest", "unittest"}
     _allowed_python_test_flags = {"-B", "-E", "-I", "-s", "-S"}
@@ -80,7 +85,7 @@ class ToolPolicy:
             return self._check_run_tests(tool_args, cwd)
 
         if tool_name == "run_command":
-            return self._check_run_command(tool_args)
+            return self._check_run_command(tool_args, cwd)
 
         return PolicyDecision(False, f"unknown tool: {tool_name}")
 
@@ -97,6 +102,8 @@ class ToolPolicy:
         target = (base / raw_path).resolve()
         if not _is_relative_to(target, base):
             return PolicyDecision(False, f"{tool_name} path escapes workspace")
+        if tool_name == "read_file" and _is_sensitive_workspace_path(target, base):
+            return PolicyDecision(False, "read_file target is a sensitive local file")
         return PolicyDecision(True, f"{tool_name} path is inside workspace")
 
     def _check_repo_map(self, tool_args: dict[str, Any]) -> PolicyDecision:
@@ -151,7 +158,7 @@ class ToolPolicy:
             return PolicyDecision(False, "overwrite must be a boolean")
         return PolicyDecision(True, "write_file path and content are allowed")
 
-    def _check_run_command(self, tool_args: dict[str, Any]) -> PolicyDecision:
+    def _check_run_command(self, tool_args: dict[str, Any], cwd: Path) -> PolicyDecision:
         cmd = tool_args.get("cmd")
         if not isinstance(cmd, str) or not cmd.strip():
             return PolicyDecision(False, "cmd must be a non-empty string")
@@ -168,17 +175,29 @@ class ToolPolicy:
         if not parts:
             return PolicyDecision(False, "cmd parsed to no arguments")
 
-        if parts[0] == "git":
+        head = Path(parts[0]).name
+
+        if head in self._blocked_env_commands:
+            return PolicyDecision(False, f"environment inspection is not allowed: {head}")
+
+        if head == "git":
             if len(parts) < 2:
                 return PolicyDecision(False, "git command must include a subcommand")
             if parts[1] not in self._allowed_git_subcommands:
                 return PolicyDecision(False, f"git subcommand is not allowed: {parts[1]}")
             return PolicyDecision(True, "read-only git command allowed by MVP policy")
 
-        if parts[0] in self._blocked_command_heads:
-            return PolicyDecision(False, f"command is not allowed in MVP policy: {parts[0]}")
+        if head in self._blocked_command_heads:
+            return PolicyDecision(False, f"command is not allowed in MVP policy: {head}")
 
-        return PolicyDecision(True, "command allowed by MVP read-oriented policy")
+        if head not in self._allowed_run_commands:
+            return PolicyDecision(False, f"command is not allowed in MVP policy: {head}")
+
+        path_decision = self._check_run_command_path_args(parts, cwd)
+        if not path_decision.allowed:
+            return path_decision
+
+        return PolicyDecision(True, "read-only repository inspection command allowed")
 
     def _check_run_tests(
         self,
@@ -254,6 +273,22 @@ class ToolPolicy:
                     return PolicyDecision(False, f"test path escapes workspace: {candidate}")
         return PolicyDecision(True, "test path arguments stay inside workspace")
 
+    def _check_run_command_path_args(self, parts: list[str], cwd: Path) -> PolicyDecision:
+        base = cwd.resolve()
+        for raw_part in parts[1:]:
+            if raw_part in self._blocked_run_command_options:
+                return PolicyDecision(False, f"command option is not allowed: {raw_part}")
+            if _mentions_sensitive_path(raw_part):
+                return PolicyDecision(False, f"command mentions a sensitive local path: {raw_part}")
+            candidates = _path_candidates_from_arg(raw_part)
+            for candidate in candidates:
+                target = (base / candidate).resolve()
+                if not _is_relative_to(target, base):
+                    return PolicyDecision(False, f"command path escapes workspace: {candidate}")
+                if _is_sensitive_workspace_path(target, base):
+                    return PolicyDecision(False, f"command path is sensitive: {candidate}")
+        return PolicyDecision(True, "command path arguments stay inside workspace")
+
     def _looks_like_test_script(self, value: str) -> bool:
         path = value.split("::", 1)[0]
         name = Path(path).name
@@ -280,6 +315,30 @@ def _is_python_head(head: str) -> bool:
         return False
     suffix = head[len("python3.") :]
     return suffix.isdigit()
+
+
+def _is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:
+    try:
+        rel = path.relative_to(cwd)
+    except ValueError:
+        return True
+    for part in rel.parts:
+        if part in SENSITIVE_FILE_NAMES or part.startswith(".env."):
+            return True
+    return path.name.endswith(SENSITIVE_FILE_SUFFIXES)
+
+
+def _mentions_sensitive_path(value: str) -> bool:
+    cleaned = value.strip("'\"")
+    path = Path(cleaned)
+    parts = path.parts or (cleaned,)
+    for part in parts:
+        stripped = part.strip("*?[]{}")
+        if stripped in SENSITIVE_FILE_NAMES or stripped.startswith(".env."):
+            return True
+        if stripped.endswith(SENSITIVE_FILE_SUFFIXES):
+            return True
+    return False
 
 
 def _path_candidates_from_arg(value: str) -> list[str]:

@@ -168,6 +168,45 @@ class TuiRenderLogicTests(unittest.TestCase):
             self.assertEqual(tui.last_trace_path, trace_path)
             self.assertTrue(any(message.text.startswith("done") for message in tui.messages))
 
+    def test_snapshot_config_preserves_context_and_repo_map_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            config.context_mode = "memory"
+            config.repo_map_mode = "none"
+            tui = HarnessCoderTui(config)
+
+            snapshot = tui._snapshot_config()
+
+        self.assertEqual(snapshot.context_mode, "memory")
+        self.assertEqual(snapshot.repo_map_mode, "none")
+
+    def test_run_agent_background_uses_context_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            config.provider = "hc-bench-oracle"
+            config.context_mode = "pack"
+            active = ActiveRun(
+                prompt="Finish immediately.",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+            tui = HarnessCoderTui(config)
+
+            tui._run_agent_background(active)
+
+            self.assertIsNone(active.error)
+            assert active.trace_path is not None
+            events = [
+                json.loads(line)
+                for line in active.trace_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            run_started = next(event for event in events if event["type"] == "run_started")
+            self.assertEqual(run_started["context_mode"], "pack")
+
 
 class _FakeScreen:
     def __init__(self, height: int, width: int) -> None:

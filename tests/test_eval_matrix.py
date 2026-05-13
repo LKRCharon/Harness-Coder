@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 
 from harnesscoder.cli import main
-from harnesscoder.eval_runner import render_markdown_matrix, run_eval_matrix
+from harnesscoder.eval_runner import (
+    EvalCase,
+    _run_command_for_eval,
+    render_markdown_matrix,
+    run_eval_cases,
+    run_eval_matrix,
+)
 from harnesscoder.model_profiles import (
     ModelProfile,
     load_model_profiles,
@@ -93,12 +99,86 @@ class EvalMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(matrix), 1)
         self.assertEqual(matrix[0].results, [])
+        self.assertEqual(matrix[0].planned_case_ids, ["bugfix-add-one"])
         self.assertIn("HARNESSCODER_TEST_MISSING_KEY", matrix[0].error or "")
 
         report = render_markdown_matrix(matrix)
         self.assertIn("Profile Errors", report)
         self.assertIn("real_missing_key", report)
+        self.assertIn("- Cases: 1", report)
+        self.assertIn("SKIP", report)
         self.assertIn("profile_error=1", report)
+
+    def test_eval_subprocess_redacts_sensitive_environment_output(self) -> None:
+        import os
+
+        previous = os.environ.get("HARNESSCODER_TEST_SECRET")
+        os.environ["HARNESSCODER_TEST_SECRET"] = "super-secret-value"
+        try:
+            result = _run_command_for_eval(
+                (
+                    "python -c \"import os; "
+                    "print(os.environ.get('HARNESSCODER_TEST_SECRET')); "
+                    "print('OPENAI_API_KEY=literal-secret')\""
+                ),
+                ROOT,
+                10,
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("HARNESSCODER_TEST_SECRET", None)
+            else:
+                os.environ["HARNESSCODER_TEST_SECRET"] = previous
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("None", result.stdout)
+        self.assertNotIn("super-secret-value", result.stdout)
+        self.assertIn("OPENAI_API_KEY=[REDACTED]", result.stdout)
+
+    def test_fixture_eval_trace_root_is_relative_to_workspace_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = root / "fixture"
+            fixture.mkdir()
+            (fixture / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            cases = root / "cases.json"
+            cases.write_text(
+                (
+                    '{"cases":[{"id":"trace-root-case","category":"smoke",'
+                    '"task":"Finish immediately.",'
+                    '"cwd":".","repo_fixture":"fixture",'
+                    '"test_command":"python -m unittest discover",'
+                    '"timeout":30,"success_returncode":0}]}'
+                ),
+                encoding="utf-8",
+            )
+
+            results = run_eval_cases(
+                cases_path=cases,
+                workspace_root=root,
+                provider="hc-bench-oracle",
+                trace_root=".harnesscoder/eval-runs",
+                max_iterations=1,
+            )
+
+        self.assertEqual(len(results), 1)
+        trace_path = results[0].trace_path
+        self.assertTrue(
+            trace_path.is_relative_to((root / ".harnesscoder/eval-runs").resolve()),
+            trace_path,
+        )
+        self.assertFalse(
+            trace_path.is_relative_to(
+                (root / ".harnesscoder/eval-workspaces").resolve()
+            ),
+            trace_path,
+        )
 
     def test_cli_matrix_returns_nonzero_for_profile_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

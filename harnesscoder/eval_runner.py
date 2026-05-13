@@ -22,6 +22,7 @@ from harnesscoder.core.models import (
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode
+from harnesscoder.core.tools import redact_sensitive_text, safe_subprocess_env
 from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
 
@@ -124,6 +125,7 @@ class EvalMatrixProfileResult:
     provider: str
     results: list[EvalResult]
     error: str | None = None
+    planned_case_ids: list[str] = field(default_factory=list)
 
 
 def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
@@ -193,6 +195,7 @@ def run_eval_cases(
     root = Path(workspace_root).resolve()
     resolved_cases_path = _resolve_cases_path(cases_path, root)
     cases = load_eval_cases(resolved_cases_path)
+    resolved_trace_root = _resolve_trace_root(trace_root, root)
 
     results: list[EvalResult] = []
     for case in cases:
@@ -206,7 +209,7 @@ def run_eval_cases(
         runner = AgentRunner(
             model=model or _build_model(provider),
             cwd=case_cwd,
-            trace_root=Path(trace_root),
+            trace_root=resolved_trace_root,
             max_iterations=effective_max_iterations,
             context_mode=context_mode,
             repo_map_mode=repo_map_mode,
@@ -301,6 +304,8 @@ def run_eval_matrix(
     repo_map_mode: RepoMapMode = "auto",
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
+    root = Path(workspace_root).resolve()
+    planned_case_ids = [case.id for case in load_eval_cases(_resolve_cases_path(cases_path, root))]
     for profile in profiles:
         try:
             model = profile.build()
@@ -311,6 +316,7 @@ def run_eval_matrix(
                     provider=profile.provider,
                     results=[],
                     error=f"{type(exc).__name__}: {exc}",
+                    planned_case_ids=planned_case_ids,
                 )
             )
             continue
@@ -329,6 +335,7 @@ def run_eval_matrix(
                 profile_name=profile.name,
                 provider=profile.provider,
                 results=results,
+                planned_case_ids=planned_case_ids,
             )
         )
     return matrix
@@ -521,13 +528,14 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
     for profile_result in matrix:
         results = profile_result.results
         if profile_result.error:
+            planned_total = len(profile_result.planned_case_ids)
             lines.append(
                 "| "
                 + " | ".join(
                     [
                         _md_cell(profile_result.profile_name),
                         _md_cell(profile_result.provider),
-                        "0",
+                        str(planned_total),
                         "n/a",
                         "n/a",
                         "n/a",
@@ -543,7 +551,9 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         "0",
                         "0",
                         "0",
-                        _md_cell(f"profile_error=1 ({profile_result.error})"),
+                        _md_cell(
+                            f"profile_error=1 skipped={planned_total} ({profile_result.error})"
+                        ),
                     ]
                 )
                 + " |"
@@ -595,8 +605,6 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         ]
     )
     for profile_result in matrix:
-        if profile_result.error:
-            continue
         for category, category_results in _category_summary(profile_result.results).items():
             category_total = len(category_results)
             category_passed = sum(1 for result in category_results if result.passed)
@@ -648,7 +656,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         for item in matrix:
             result = by_profile.get(item.profile_name, {}).get(case_id)
             if result is None:
-                row.append("-")
+                row.append("SKIP" if item.error else "-")
             else:
                 status = "PASS" if result.passed else "FAIL"
                 row.append(
@@ -848,7 +856,7 @@ def _run_command_for_eval(
             duration_seconds=time.monotonic() - started,
         )
 
-    env = {**os.environ, "PYTHONUTF8": "1", **(extra_env or {})}
+    env = safe_subprocess_env({"PYTHONUTF8": "1", **(extra_env or {})})
     try:
         completed = subprocess.run(
             parts,
@@ -868,8 +876,8 @@ def _run_command_for_eval(
             duration_seconds=time.monotonic() - started,
         )
     except subprocess.TimeoutExpired as exc:
-        stdout = _decode_timeout_output(exc.stdout)
-        stderr = _decode_timeout_output(exc.stderr)
+        stdout = redact_sensitive_text(_decode_timeout_output(exc.stdout))
+        stderr = redact_sensitive_text(_decode_timeout_output(exc.stderr))
         return _CommandResult(
             returncode=None,
             stdout=stdout,
@@ -880,8 +888,8 @@ def _run_command_for_eval(
 
     return _CommandResult(
         returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        stdout=redact_sensitive_text(completed.stdout),
+        stderr=redact_sensitive_text(completed.stderr),
         timed_out=False,
         duration_seconds=time.monotonic() - started,
     )
@@ -987,6 +995,13 @@ def _build_model(provider: str) -> ModelAdapter:
 
 def _resolve_cases_path(cases_path: str | Path, workspace_root: Path) -> Path:
     path = Path(cases_path)
+    if path.is_absolute():
+        return path.resolve()
+    return (workspace_root / path).resolve()
+
+
+def _resolve_trace_root(trace_root: str | Path, workspace_root: Path) -> Path:
+    path = Path(trace_root)
     if path.is_absolute():
         return path.resolve()
     return (workspace_root / path).resolve()
@@ -1150,6 +1165,11 @@ def _case_ids_from_matrix(matrix: list[EvalMatrixProfileResult]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for profile_result in matrix:
+        for case_id in profile_result.planned_case_ids:
+            if case_id in seen:
+                continue
+            seen.add(case_id)
+            ordered.append(case_id)
         for result in profile_result.results:
             if result.case_id in seen:
                 continue

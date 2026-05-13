@@ -152,7 +152,7 @@ Keep secrets out of the repo. Configure the provider with environment variables
 or a local `.env` file:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENAI_API_KEY="<your-api-key>"
 export HARNESSCODER_OPENAI_BASE_URL="https://your-openai-compatible-endpoint.example/v1"
 export HARNESSCODER_OPENAI_MODEL="your-codex-model-name"
 
@@ -261,7 +261,7 @@ python -m harnesscoder \
 Run the real bugfix loop with an OpenAI-compatible model:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENAI_API_KEY="<your-api-key>"
 export HARNESSCODER_OPENAI_BASE_URL="https://your-openai-compatible-endpoint.example/v1"
 export HARNESSCODER_OPENAI_MODEL="your-codex-model-name"
 
