@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Run HC-Bench-20 oracle
+        run: |
+          python -m harnesscoder \
+            --provider hc-bench-oracle \
+            --eval eval/hc_bench_20.json \
+            --max-iterations 8 \
+            --eval-report .harnesscoder/reports/hc-bench-20-oracle-ci.md

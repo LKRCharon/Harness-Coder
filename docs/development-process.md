@@ -366,7 +366,7 @@ model-response parsing.
 ### 16. Real Model Returned Duplicate JSON Actions
 
 Symptom:
-`gpt-5.5` returned a valid JSON action twice in one response:
+A real model returned a valid JSON action twice in one response:
 
 ```text
 {...}{...}
@@ -383,7 +383,7 @@ LLM outputs are probabilistic even under strict prompting. A production harness
 should validate model actions strictly but tolerate common formatting noise when
 safe.
 
-### 17. Live `gpt-5.5` Run Confirmed The Full Loop
+### 17. Live Real-Model Run Confirmed The Full Loop
 
 Command:
 
@@ -391,7 +391,7 @@ Command:
 python -m harnesscoder \
   --provider openai-codex \
   --openai-base-url https://your-openai-compatible-endpoint.example \
-  --openai-model gpt-5.5 \
+  --openai-model your-model-name \
   "看一下这个 repo 是做什么的"
 ```
 
@@ -409,7 +409,7 @@ Interview angle:
 At this point the project was no longer only a fake runtime. The real loop was:
 
 ```text
-sub2api gpt-5.5 -> model_action JSON -> policy gate -> local tool
+real model -> model_action JSON -> policy gate -> local tool
 -> observation -> next model_action -> trace
 ```
 
@@ -475,7 +475,7 @@ Current commands include:
 ```text
 /help
 /status
-/model gpt-5.5
+/model your-model-name
 /model scripted
 /provider openai-codex
 /base-url https://your-openai-compatible-endpoint.example
@@ -1028,3 +1028,28 @@ context governance: memory + compression + RepoMap
 Interview angle:
 This makes the project legible as agent infrastructure: measurable, auditable,
 recoverable, and optimizable, rather than a loose pile of features.
+
+## 1.0.0 Milestone
+
+### 45. Interview Release Means Reproducible Evidence And Public Hygiene
+
+Problem:
+A project can have strong internal evidence and still fail as a portfolio
+artifact if it lacks a license, CI, a release checklist, or clear non-goals.
+
+Decision:
+Cut the 1.0 surface around the original thesis:
+
+```text
+trace-backed coding agent harness with real-model eval, task-local memory,
+context compression, and repo-level context governance
+```
+
+Add an MIT license, GitHub Actions CI for unit tests plus HC-Bench-20 oracle,
+`docs/release-checklist.md`, and `docs/spec-1.0.0.md`. Keep `.env`,
+`models.toml`, and `.harnesscoder/` ignored and local. Public docs use generic
+model and endpoint placeholders.
+
+Interview angle:
+1.0 is not a bigger feature set. It is a clean release boundary: reproducible,
+auditable, benchmarked, and safe to show.

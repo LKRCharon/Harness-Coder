@@ -28,7 +28,7 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.9.1` is a runnable local runtime with real bugfix and minimal
+Version `1.0.0` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
@@ -93,7 +93,7 @@ commands for direct tools and runtime controls:
 ```text
 /help
 /status
-/model gpt-5.5
+/model your-model-name
 /model scripted
 /provider openai-codex
 /base-url https://your-openai-compatible-endpoint.example
@@ -220,6 +220,8 @@ integration, fixes, and interview-ready talking points.
 
 For interview-facing material, see [docs/showcase.md](docs/showcase.md) and
 [docs/architecture.md](docs/architecture.md).
+For release checks, see [docs/release-checklist.md](docs/release-checklist.md)
+and [docs/spec-1.0.0.md](docs/spec-1.0.0.md).
 
 ## Replay And Eval
 
