@@ -999,3 +999,32 @@ Interview angle:
 RepoMap is not "another feature"; it is the repository-level context governance
 layer. It lets the project explain whether the agent found the right file
 sooner, used fewer broad reads, or changed tool behavior under an ablation.
+
+## 0.9.1 Milestone
+
+### 44. Showcase Docs Turn Eval Evidence Into An Interview Story
+
+Problem:
+The runtime and benchmark evidence existed, but an interviewer should not need
+to reconstruct the architecture, replay story, or failure attribution story from
+raw source files and reports.
+
+Decision:
+Add `docs/showcase.md` and `docs/architecture.md`. The showcase doc summarizes
+the 1.0 thesis, HC-Bench-20 oracle evidence, real-model matrix evidence,
+RepoMap ablation evidence, replay example, and failure attribution example. The
+architecture doc gives the event-sourced loop, context-governance layers, trace
+event taxonomy, and eval flow with Mermaid diagrams.
+
+README now opens with the four durable pillars:
+
+```text
+event-sourced agent loop
+policy-gated tools
+trace/replay/eval
+context governance: memory + compression + RepoMap
+```
+
+Interview angle:
+This makes the project legible as agent infrastructure: measurable, auditable,
+recoverable, and optimizable, rather than a loose pile of features.

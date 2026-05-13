@@ -1,9 +1,17 @@
 # HarnessCoder
 
-HarnessCoder is a local coding agent harness for real repository tasks. It is not
-a fork of CoreCoder, not a smaller LangGraph clone, and not a web UI. The first
-goal is a controllable runtime that can run an agent loop, gate tool execution
-with policy, and write every important decision into a replayable JSONL trace.
+HarnessCoder is a local coding agent harness for real repository tasks. The 1.0
+story is deliberately narrow:
+
+- event-sourced agent loop
+- policy-gated tools
+- trace/replay/eval
+- context governance: memory, compression, and RepoMap
+
+It is not a fork of CoreCoder, not a smaller LangGraph clone, and not a web UI.
+The first goal is a controllable runtime that can run an agent loop, gate tool
+execution with policy, and write every important decision into a replayable
+JSONL trace.
 
 The core loop is dynamic:
 
@@ -20,7 +28,7 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.9.0` is a runnable local runtime with real bugfix and minimal
+Version `0.9.1` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
@@ -209,6 +217,9 @@ can consume them without depending on in-memory state.
 See [docs/development-process.md](docs/development-process.md) for the running
 engineering log: design decisions, bugs encountered during real provider
 integration, fixes, and interview-ready talking points.
+
+For interview-facing material, see [docs/showcase.md](docs/showcase.md) and
+[docs/architecture.md](docs/architecture.md).
 
 ## Replay And Eval
 
