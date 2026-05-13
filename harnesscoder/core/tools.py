@@ -14,7 +14,6 @@ from typing import Any, Callable
 from harnesscoder.core.repo_map import RepoMapCache
 
 
-MAX_TOOL_OUTPUT = 16_000
 DEFAULT_TEST_COMMAND = "python -m unittest discover"
 MAX_COMMAND_TIMEOUT = 120
 SENSITIVE_FILE_NAMES = {
@@ -148,7 +147,7 @@ class ToolRegistry:
             call_id=call_id,
             tool_name=tool_name,
             ok=True,
-            output=_truncate(numbered),
+            output=numbered,
             metadata={
                 "path": str(target.relative_to(self.cwd)),
                 "offset": offset,
@@ -215,7 +214,7 @@ class ToolRegistry:
                 call_id=call_id,
                 tool_name=tool_name,
                 ok=ok,
-                output=_truncate(output.strip()),
+                output=output.strip(),
                 error=None if ok else output.strip(),
                 metadata={
                     "query": query,
@@ -253,7 +252,7 @@ class ToolRegistry:
             call_id=call_id,
             tool_name=tool_name,
             ok=True,
-            output=_truncate(result.text),
+            output=result.text,
             metadata=result.metadata,
         )
 
@@ -582,7 +581,7 @@ class ToolRegistry:
                 call_id,
                 tool_name,
                 False,
-                _truncate(output),
+                output,
                 f"command timed out after {timeout}s",
                 metadata={
                     "cmd": cmd,
@@ -599,7 +598,7 @@ class ToolRegistry:
             call_id=call_id,
             tool_name=tool_name,
             ok=completed.returncode == 0,
-            output=_truncate(combined.strip()),
+            output=combined.strip(),
             error=None if completed.returncode == 0 else f"exit code {completed.returncode}",
             metadata={
                 "cmd": cmd,
@@ -640,7 +639,7 @@ class ToolRegistry:
             call_id=call_id,
             tool_name="search_code",
             ok=True,
-            output=_truncate("\n".join(matches)),
+            output="\n".join(matches),
             metadata={
                 "query": query,
                 "path": str(target.relative_to(self.cwd)),
@@ -655,13 +654,6 @@ class ToolRegistry:
         except ValueError as exc:
             raise ValueError(f"path escapes workspace: {path}") from exc
         return target
-
-
-def _truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
-
 
 def safe_subprocess_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
     env = {

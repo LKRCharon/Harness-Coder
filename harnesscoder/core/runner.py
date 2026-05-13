@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.checkpoint import (
     default_checkpoint_path,
     load_checkpoint,
@@ -190,6 +191,7 @@ class AgentRunner:
             )
 
             result = self._execute_or_deny(action, decision)
+            result = store_large_observation(result, run_path=trace.run_path).result
             self._attach_tool_metadata(state, action, result)
             observation = ToolObservation(
                 call_id=result.call_id,

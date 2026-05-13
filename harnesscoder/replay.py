@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter
@@ -41,7 +42,8 @@ def load_trace(path: str | Path) -> list[JsonRecord]:
 def summarize_trace(path: str | Path) -> JsonRecord:
     """Return a structured summary for a HarnessCoder trace."""
 
-    records = load_trace(path)
+    trace_path = _resolve_trace_path(path)
+    records = load_trace(trace_path)
     event_counts = Counter(_event_type(record) for record in records)
     tool_stats = _summarize_tools(records)
     state = reconstruct_state_from_records(records)
@@ -62,6 +64,7 @@ def summarize_trace(path: str | Path) -> JsonRecord:
         verifier_result=verifier_result,
         status=status,
         state=state,
+        trace_path=trace_path,
     )
 
     return {
@@ -205,8 +208,10 @@ def _metrics_summary(
     verifier_result: JsonRecord | None,
     status: str,
     state: JsonRecord,
+    trace_path: Path | None = None,
 ) -> JsonRecord:
     tool_call_count = _total_tool_calls(tool_stats)
+    artifact_integrity = _artifact_integrity_counts(records, trace_path)
     metrics: JsonRecord = {
         "tool_call_count": tool_call_count,
         "average_tool_calls": float(tool_call_count),
@@ -215,6 +220,12 @@ def _metrics_summary(
         "invalid_tool_call_count": _invalid_tool_call_count(records),
         "policy_denial_count": len(policy_denials),
         "failed_tool_count": len(failed_tools),
+        "raw_tool_output_chars": _raw_tool_output_chars(records),
+        "stored_artifact_count": _stored_artifact_count(records),
+        "artifact_missing_count": artifact_integrity["missing"],
+        "artifact_hash_mismatch_count": artifact_integrity["hash_mismatch"],
+        "largest_tool_output_chars": _largest_tool_output_chars(records),
+        "tool_output_preview_chars": _tool_output_preview_chars(records),
         "context_packed_count": _event_count(records, "context_packed"),
         "context_injected_count": _context_injected_count(records),
         "estimated_context_tokens": _estimated_context_tokens(records),
@@ -240,6 +251,7 @@ def _metrics_summary(
         "test_passed": _test_passed(test_result),
         "verifier_passed": _test_passed(verifier_result),
     }
+    metrics["observation_compression_ratio"] = _observation_compression_ratio(metrics)
     metrics["failure_category"] = _failure_category(
         status=status,
         metrics=metrics,
@@ -260,6 +272,113 @@ def _finish_grace_success_count(records: list[JsonRecord]) -> int:
         if record.get("type") == "finish_grace_result"
         and record.get("accepted") is True
     )
+
+
+def _raw_tool_output_chars(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        result = _tool_result(record)
+        if result is None:
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and "raw_output_chars" in metadata:
+            total += _as_int(metadata.get("raw_output_chars"))
+            continue
+        output = result.get("output")
+        if isinstance(output, str):
+            total += len(output)
+    return total
+
+
+def _stored_artifact_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if (metadata := _tool_result_metadata(record)) is not None
+        and metadata.get("artifact_stored") is True
+    )
+
+
+def _artifact_integrity_counts(
+    records: list[JsonRecord],
+    trace_path: Path | None,
+) -> dict[str, int]:
+    counts = {"missing": 0, "hash_mismatch": 0}
+    if trace_path is None:
+        return counts
+    run_path = trace_path.parent
+    for record in records:
+        metadata = _tool_result_metadata(record)
+        if metadata is None or metadata.get("artifact_stored") is not True:
+            continue
+        raw_artifact_path = metadata.get("artifact_path")
+        if not isinstance(raw_artifact_path, str) or not raw_artifact_path:
+            counts["missing"] += 1
+            continue
+        artifact_path = (run_path / raw_artifact_path).resolve()
+        try:
+            artifact_path.relative_to(run_path.resolve())
+        except ValueError:
+            counts["missing"] += 1
+            continue
+        if not artifact_path.is_file():
+            counts["missing"] += 1
+            continue
+        expected_hash = metadata.get("artifact_sha256")
+        if isinstance(expected_hash, str) and expected_hash:
+            try:
+                content = artifact_path.read_bytes()
+            except OSError:
+                counts["missing"] += 1
+                continue
+            actual_hash = hashlib.sha256(content).hexdigest()
+            if actual_hash != expected_hash:
+                counts["hash_mismatch"] += 1
+    return counts
+
+
+def _largest_tool_output_chars(records: list[JsonRecord]) -> int:
+    largest = 0
+    for record in records:
+        result = _tool_result(record)
+        if result is None:
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and "raw_output_chars" in metadata:
+            largest = max(largest, _as_int(metadata.get("raw_output_chars")))
+            continue
+        output = result.get("output")
+        if isinstance(output, str):
+            largest = max(largest, len(output))
+    return largest
+
+
+def _tool_output_preview_chars(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        result = _tool_result(record)
+        if result is None:
+            continue
+        output = result.get("output")
+        if isinstance(output, str):
+            total += len(output)
+    return total
+
+
+def _observation_compression_ratio(metrics: JsonRecord) -> float | None:
+    raw_chars = _as_int(metrics.get("raw_tool_output_chars"))
+    preview_chars = _as_int(metrics.get("tool_output_preview_chars"))
+    if raw_chars <= 0:
+        return None
+    return round(preview_chars / raw_chars, 4)
+
+
+def _tool_result_metadata(record: JsonRecord) -> JsonRecord | None:
+    result = _tool_result(record)
+    if result is None:
+        return None
+    metadata = result.get("metadata")
+    return metadata if isinstance(metadata, dict) else None
 
 
 def _context_injected_count(records: list[JsonRecord]) -> int:

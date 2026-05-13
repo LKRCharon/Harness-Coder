@@ -375,6 +375,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         results,
         "first_repo_map_target_step",
     )
+    raw_tool_output_chars = _sum_metric(results, "raw_tool_output_chars")
+    tool_output_preview_chars = _sum_metric(results, "tool_output_preview_chars")
+    stored_artifacts = _sum_metric(results, "stored_artifact_count")
+    artifact_missing = _sum_metric(results, "artifact_missing_count")
+    artifact_hash_mismatch = _sum_metric(results, "artifact_hash_mismatch_count")
+    largest_tool_output_chars = _max_metric(results, "largest_tool_output_chars")
+    output_compression_ratio = _output_compression_ratio(results)
     compression_count = _sum_metric(results, "compression_count")
     hot_observation_count = _sum_metric(results, "hot_observation_count")
     cold_summary_chars = _sum_metric(results, "cold_summary_chars")
@@ -417,6 +424,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| RepoMap uses | {repo_map_used} |",
         f"| RepoMap injections | {repo_map_injected} |",
         f"| Avg first RepoMap target read step | {_format_nullable_number(first_repo_map_target_step)} |",
+        f"| Raw tool output chars | {raw_tool_output_chars} |",
+        f"| Tool output preview chars | {tool_output_preview_chars} |",
+        f"| Stored artifacts | {stored_artifacts} |",
+        f"| Artifact missing count | {artifact_missing} |",
+        f"| Artifact hash mismatch count | {artifact_hash_mismatch} |",
+        f"| Largest tool output chars | {largest_tool_output_chars} |",
+        f"| Observation compression ratio | {_format_nullable_rate(output_compression_ratio)} |",
         f"| Compression count | {compression_count} |",
         f"| Hot observations | {hot_observation_count} |",
         f"| Cold summary chars | {cold_summary_chars} |",
@@ -431,8 +445,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         "",
         "## Category Summary",
         "",
-        "| Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | Failures |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | Artifacts | Failures |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for category, category_results in category_breakdown.items():
         category_total = len(category_results)
@@ -461,6 +475,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     _format_rate(category_verifier_passed, category_total),
                     _format_number(_average_metric(category_results, "average_tool_calls")),
                     str(_sum_metric(category_results, "policy_denial_count")),
+                    str(_sum_metric(category_results, "stored_artifact_count")),
                     _md_cell(_format_breakdown(category_failures)),
                 ]
             )
@@ -550,8 +565,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -581,9 +596,12 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         "0",
                         "0",
                         "0",
-                        "0",
                         "0/0",
                         "0",
+                        "0",
+                        "0 missing / 0 mismatch",
+                        "0",
+                        "n/a",
                         _md_cell(
                             f"profile_error=1 skipped={planned_total} ({profile_result.error})"
                         ),
@@ -629,6 +647,13 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "repo_map_injected_count")),
                     f"{finish_grace_successes}/{finish_grace_attempts}",
                     str(_sum_metric(results, "compression_count")),
+                    str(_sum_metric(results, "stored_artifact_count")),
+                    (
+                        f"{_sum_metric(results, 'artifact_missing_count')} missing / "
+                        f"{_sum_metric(results, 'artifact_hash_mismatch_count')} mismatch"
+                    ),
+                    str(_sum_metric(results, "raw_tool_output_chars")),
+                    _format_nullable_rate(_output_compression_ratio(results)),
                     _md_cell(_format_breakdown(failure_breakdown)),
                 ]
             )
@@ -640,8 +665,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
             "",
             "## Category Summary",
             "",
-            "| Profile | Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | RepoMap used | Failure breakdown |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Profile | Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | RepoMap used | Artifacts | Failure breakdown |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for profile_result in matrix:
@@ -680,6 +705,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         ),
                         str(_sum_metric(category_results, "policy_denial_count")),
                         str(_sum_metric(category_results, "repo_map_used_count")),
+                        str(_sum_metric(category_results, "stored_artifact_count")),
                         _md_cell(_format_breakdown(category_failures)),
                     ]
                 )
@@ -1259,6 +1285,27 @@ def _sum_metric(results: list[EvalResult], key: str) -> int:
     return total
 
 
+def _max_metric(results: list[EvalResult], key: str) -> int:
+    largest = 0
+    for result in results:
+        value = result.metrics.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            largest = max(largest, value)
+        elif isinstance(value, float):
+            largest = max(largest, int(value))
+    return largest
+
+
+def _output_compression_ratio(results: list[EvalResult]) -> float | None:
+    raw_chars = _sum_metric(results, "raw_tool_output_chars")
+    preview_chars = _sum_metric(results, "tool_output_preview_chars")
+    if raw_chars <= 0:
+        return None
+    return preview_chars / raw_chars
+
+
 def _format_rate(count: int, total: int) -> str:
     if total <= 0:
         return "n/a"
@@ -1299,6 +1346,13 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         "invalid_tool_call_count",
         "policy_denial_count",
         "failed_tool_count",
+        "raw_tool_output_chars",
+        "tool_output_preview_chars",
+        "stored_artifact_count",
+        "artifact_missing_count",
+        "artifact_hash_mismatch_count",
+        "largest_tool_output_chars",
+        "observation_compression_ratio",
         "context_packed_count",
         "context_injected_count",
         "estimated_context_tokens",

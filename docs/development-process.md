@@ -134,6 +134,28 @@ Interview angle:
 Even small local tools need output hygiene. Agent observations are future model
 context, so noisy observations can degrade later decisions.
 
+### 5.1. Large Tool Outputs Need Artifact Storage, Not Blind Truncation
+
+Symptom:
+Long test output or search output can overflow the live prompt, but plain
+truncation destroys evidence that replay and failure analysis may need later.
+
+Decision:
+Keep tool-level redaction in `ToolRegistry`, then let `AgentRunner` persist
+large observations under the run directory before appending them to state and
+trace. The trace keeps a bounded preview plus metadata such as raw character
+count, preview character count, artifact path, and SHA-256 hash. Replay and eval
+reports aggregate raw output volume, stored artifact count, largest output size,
+artifact integrity, and observation compression ratio. Artifact storage also
+does a second generic redaction pass and records `artifact_error` instead of
+crashing the run if the local filesystem write fails.
+
+Interview angle:
+This turns context hygiene into an auditable runtime behavior: the model sees a
+bounded observation, while the evaluator can still inspect the full output and
+explain whether a failure came from noisy tools, lost evidence, or model
+decisions.
+
 ### 6. Shell Quoting Difference Between Manual Commands And Tool Execution
 
 Symptom:

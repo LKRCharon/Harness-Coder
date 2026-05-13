@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +11,8 @@ from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.core.state import AgentState, ModelAction
-from harnesscoder.core.tools import ToolRegistry, redact_sensitive_text, safe_subprocess_env
+from harnesscoder.core.artifacts import store_large_observation
+from harnesscoder.core.tools import ToolRegistry, ToolResult, redact_sensitive_text, safe_subprocess_env
 from harnesscoder.eval_runner import load_eval_cases, render_markdown_report
 from harnesscoder.replay import reconstruct_state_from_trace, summarize_trace
 
@@ -192,6 +194,83 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertTrue(result.ok, result.error)
         self.assertIn("sample.py", result.output)
+
+
+class ObservationArtifactTests(unittest.TestCase):
+    def test_artifact_filename_sanitizes_call_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_path = Path(tmp)
+            raw_output = "x" * 5000
+            result = ToolResult(
+                call_id="../call/with spaces",
+                tool_name="run_tests",
+                ok=True,
+                output=raw_output,
+            )
+
+            stored = store_large_observation(
+                result,
+                run_path=run_path,
+                preview_chars=100,
+            ).result
+
+            artifact_path = Path(stored.metadata["artifact_path"])
+            resolved = (run_path / artifact_path).resolve()
+            artifact_exists = resolved.is_file()
+            artifact_text = resolved.read_text(encoding="utf-8")
+            inside_run_path = resolved.is_relative_to(run_path.resolve())
+
+        self.assertEqual(artifact_path.parts[0], "artifacts")
+        self.assertEqual(artifact_path.name, "call_with_spaces.txt")
+        self.assertTrue(inside_run_path)
+        self.assertTrue(artifact_exists)
+        self.assertEqual(artifact_text, raw_output)
+
+    def test_artifact_store_redacts_sensitive_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_path = Path(tmp)
+            secret_line = "OPENAI_API_KEY=literal-secret"
+            result = ToolResult(
+                call_id="call_secret",
+                tool_name="read_file",
+                ok=True,
+                output=(secret_line + "\n") * 400,
+            )
+
+            stored = store_large_observation(
+                result,
+                run_path=run_path,
+                preview_chars=120,
+            ).result
+            artifact_text = (
+                run_path / stored.metadata["artifact_path"]
+            ).read_text(encoding="utf-8")
+
+        self.assertNotIn(secret_line, artifact_text)
+        self.assertNotIn(secret_line, stored.output)
+        self.assertIn("OPENAI_API_KEY=[REDACTED]", artifact_text)
+
+    def test_artifact_write_failure_keeps_preview_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            blocking_file = Path(tmp) / "not-a-directory"
+            blocking_file.write_text("blocked\n", encoding="utf-8")
+            result = ToolResult(
+                call_id="call_large",
+                tool_name="run_tests",
+                ok=True,
+                output="x" * 5000,
+            )
+
+            stored = store_large_observation(
+                result,
+                run_path=blocking_file,
+                preview_chars=100,
+            )
+
+        self.assertFalse(stored.stored)
+        self.assertFalse(stored.result.metadata["artifact_stored"])
+        self.assertIn("artifact_error", stored.result.metadata)
+        self.assertLessEqual(len(stored.result.output), 100)
 
 
 class PolicyTests(unittest.TestCase):
@@ -504,6 +583,75 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 0)
         self.assertEqual(summary["metrics"]["finish_grace_success_count"], 0)
 
+    def test_large_tool_output_is_previewed_and_stored_as_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            large_payload = "x" * 5200
+            (root / "test_large_output.py").write_text(
+                "import unittest\n\n"
+                "class LargeOutputTest(unittest.TestCase):\n"
+                "    def test_noisy_success(self):\n"
+                f"        print({large_payload!r})\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            runner = AgentRunner(
+                model=_LargeOutputThenFinishModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=3,
+            )
+
+            result = runner.run("Run the noisy test.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            tool_record = next(
+                record
+                for record in records
+                if record.get("type") == "tool_result"
+                and record.get("result", {}).get("tool_name") == "run_tests"
+            )
+            tool_result = tool_record["result"]
+            metadata = tool_result["metadata"]
+            artifact_path = result.trace_path.parent / metadata["artifact_path"]
+            artifact_exists = artifact_path.is_file()
+            artifact_text = artifact_path.read_text(encoding="utf-8")
+            artifact_sha256 = hashlib.sha256(artifact_text.encode("utf-8")).hexdigest()
+            state_updated = next(
+                record
+                for record in records
+                if record.get("type") == "state_updated"
+            )
+            checkpoint_path = Path(
+                next(
+                    record["checkpoint_path"]
+                    for record in records
+                    if record.get("type") == "checkpoint_created"
+                )
+            )
+            checkpoint_text = checkpoint_path.read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "success")
+        self.assertTrue(metadata["artifact_stored"])
+        self.assertTrue(artifact_exists)
+        self.assertIn(large_payload, artifact_text)
+        self.assertNotIn(large_payload, tool_result["output"])
+        self.assertNotIn(large_payload, state_updated["state"]["last_observation"]["output"])
+        self.assertNotIn(large_payload, checkpoint_text)
+        self.assertNotIn(large_payload, _LargeOutputThenFinishModel.last_payload)
+        self.assertIn("full output stored as artifact", _LargeOutputThenFinishModel.last_payload)
+        self.assertLessEqual(len(tool_result["output"]), 4000)
+        self.assertEqual(metadata["artifact_chars"], metadata["raw_output_chars"])
+        self.assertEqual(metadata["observation_preview_chars"], len(tool_result["output"]))
+        self.assertEqual(metadata["artifact_sha256"], artifact_sha256)
+        metrics = summary["metrics"]
+        self.assertEqual(metrics["stored_artifact_count"], 1)
+        self.assertGreater(metrics["raw_tool_output_chars"], metrics["tool_output_preview_chars"])
+        self.assertLess(metrics["observation_compression_ratio"], 1)
+
 
 class _ReadThenFinishModel:
     name = "read-then-finish"
@@ -606,6 +754,26 @@ class _PassThenFailTestsModel:
             rationale="Run a failing command.",
             tool_name="run_tests",
             tool_args={"cmd": "python -m unittest missing_module"},
+        )
+
+
+class _LargeOutputThenFinishModel:
+    name = "large-output-then-finish"
+    last_payload = ""
+
+    def next_action(self, state: AgentState, context=None) -> ModelAction:
+        if state.latest_observation_for("run_tests") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Run the noisy test.",
+                tool_name="run_tests",
+                tool_args={"cmd": "python -m unittest test_large_output.py"},
+            )
+        self.__class__.last_payload = context.to_model_input()[1]["content"]
+        return ModelAction(
+            kind="finish",
+            rationale="Noisy test passed.",
+            content="done",
         )
 
 

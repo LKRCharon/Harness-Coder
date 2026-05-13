@@ -207,6 +207,34 @@ class TuiRenderLogicTests(unittest.TestCase):
             run_started = next(event for event in events if event["type"] == "run_started")
             self.assertEqual(run_started["context_mode"], "pack")
 
+    def test_direct_tool_large_output_uses_slash_artifact_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            large_payload = "x" * 5200
+            (cwd / "test_large_output.py").write_text(
+                "import unittest\n\n"
+                "class LargeOutputTest(unittest.TestCase):\n"
+                "    def test_noisy_success(self):\n"
+                f"        print({large_payload!r})\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            tui = HarnessCoderTui(make_config(cwd))
+
+            tui._direct_tool(
+                "run_tests",
+                {"cmd": "python -m unittest test_large_output.py", "timeout": 30},
+            )
+            artifact = next(
+                (cwd / ".harnesscoder/runs/slash-artifacts/artifacts").glob("*.txt")
+            )
+            artifact_text = artifact.read_text(encoding="utf-8")
+
+        self.assertIn("artifact:", tui.messages[-1].text)
+        self.assertIn("full output stored as artifact", tui.messages[-1].text)
+        self.assertNotIn(large_payload, tui.messages[-1].text)
+        self.assertIn(large_payload, artifact_text)
+
 
 class _FakeScreen:
     def __init__(self, height: int, width: int) -> None:

@@ -130,9 +130,18 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("| Agent success rate | 66.7% (2/3) |", report)
         self.assertIn("| Patch success rate | 66.7% (2/3) |", report)
         self.assertIn("| Patch success but agent failed | 1 |", report)
+        self.assertIn("| Raw tool output chars | 3000 |", report)
+        self.assertIn("| Tool output preview chars | 1200 |", report)
+        self.assertIn("| Stored artifacts | 3 |", report)
+        self.assertIn("| Largest tool output chars | 1000 |", report)
+        self.assertIn("| Observation compression ratio | 40.0% |", report)
         self.assertIn("| Case | Category | Result | Agent | Patch |", report)
         self.assertIn("Patch success", matrix_report)
         self.assertIn("Patch ok / agent failed", matrix_report)
+        self.assertIn("Artifacts", matrix_report)
+        self.assertIn("Artifact integrity", matrix_report)
+        self.assertIn("Raw output chars", matrix_report)
+        self.assertIn("Output compression", matrix_report)
         self.assertIn("| demo | scripted | 3 | 33.3% (1/3) | 66.7% (2/3) | 66.7% (2/3) |", matrix_report)
 
     def test_eval_matrix_records_profile_initialization_error(self) -> None:
@@ -161,6 +170,15 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("- Cases: 1", report)
         self.assertIn("SKIP", report)
         self.assertIn("profile_error=1", report)
+        summary_row = next(
+            line
+            for line in report.splitlines()
+            if line.startswith("| real_missing_key |")
+        )
+        self.assertEqual(
+            summary_row.count("|"),
+            "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |".count("|"),
+        )
 
     def test_eval_subprocess_redacts_sensitive_environment_output(self) -> None:
         import os
@@ -280,6 +298,13 @@ def _result(
         failure_category="success" if passed else "demo_failed",
         metrics={
             "average_tool_calls": 1.0,
+            "raw_tool_output_chars": 1000,
+            "tool_output_preview_chars": 400,
+            "stored_artifact_count": 1,
+            "artifact_missing_count": 0,
+            "artifact_hash_mismatch_count": 0,
+            "largest_tool_output_chars": 1000,
+            "observation_compression_ratio": 0.4,
             "finish_grace_attempt_count": 0,
             "finish_grace_success_count": 0,
         },

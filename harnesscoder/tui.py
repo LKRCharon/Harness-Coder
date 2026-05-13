@@ -18,6 +18,7 @@ from harnesscoder.core.models import (
     OpenAICodexModel,
     ScriptedModel,
 )
+from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
@@ -677,14 +678,25 @@ class HarnessCoderTui:
 
         registry = ToolRegistry(self.config.cwd)
         result = registry.execute(f"slash_{uuid4().hex[:12]}", tool_name, tool_args)
+        result = store_large_observation(
+            result,
+            run_path=self._trace_root_path() / "slash-artifacts",
+        ).result
         output = result.output or result.error or ""
         if len(output) > 4000:
             output = output[:4000] + f"... [truncated {len(output) - 4000} chars]"
+        artifact_note = ""
+        if result.metadata.get("artifact_stored") is True:
+            artifact_note = (
+                "\nartifact: "
+                f"{self._trace_root_path() / 'slash-artifacts' / result.metadata['artifact_path']}"
+            )
         role: Role = "tool" if result.ok else "error"
         self.messages.append(
             Message(
                 role,
-                f"{tool_name} ok={result.ok}\npolicy: {decision.reason}\n{output}",
+                f"{tool_name} ok={result.ok}\npolicy: {decision.reason}"
+                f"{artifact_note}\n{output}",
             )
         )
 

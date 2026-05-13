@@ -28,11 +28,11 @@ policy-gated loop.
 
 ## Current Status
 
-Version `1.0.1` is a runnable local runtime with real bugfix and minimal
+Version `1.0.2` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
-lightweight TUI with live refresh. It includes:
+large-output artifact store for audit/replay. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -45,6 +45,8 @@ lightweight TUI with live refresh. It includes:
   - `run_command(cmd, timeout=30)`
 - A minimal policy gate before every tool call.
 - JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`.
+- Large tool observations are previewed in trace/model context and persisted
+  under the run's `artifacts/` directory with size and hash metadata.
 - `context_packed`, `checkpoint_created`, `run_resumed`, and `test_result`
   events for reliability-oriented replay.
 - `repo_map_built` and `repo_map_used` events for repository-level context
@@ -222,7 +224,9 @@ For interview-facing material, see [docs/showcase.md](docs/showcase.md) and
 [docs/architecture.md](docs/architecture.md).
 For release checks, see [docs/release-checklist.md](docs/release-checklist.md)
 and [docs/spec-1.0.0.md](docs/spec-1.0.0.md). The 1.0.1 evaluation tightening
-is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md).
+is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md), and the 1.0.2
+observation artifact store is scoped in
+[docs/spec-1.0.2.md](docs/spec-1.0.2.md).
 
 ## Replay And Eval
 
@@ -309,8 +313,9 @@ python -m harnesscoder \
 
 The matrix report compares pass rate, test pass rate, verifier pass rate,
 average tool calls, repeated reads, invalid calls, policy denials, tool
-failures, memory/compression metrics, RepoMap use/injection metrics, and failure
-categories. Each profile/case run still keeps its own trace. If a real-model
+failures, memory/compression metrics, RepoMap use/injection metrics, observation
+artifact metrics, and failure categories. Each profile/case run still keeps its
+own trace and artifact directory. If a real-model
 profile cannot initialize, the matrix records the profile error instead of
 hiding the reason.
 
