@@ -67,6 +67,9 @@ class ToolPolicy:
         if tool_name in {"read_file", "search_code"}:
             return self._check_path_tool(tool_name, tool_args, cwd)
 
+        if tool_name == "repo_map":
+            return self._check_repo_map(tool_args)
+
         if tool_name == "write_file":
             return self._check_write_file(tool_args, cwd)
 
@@ -95,6 +98,24 @@ class ToolPolicy:
         if not _is_relative_to(target, base):
             return PolicyDecision(False, f"{tool_name} path escapes workspace")
         return PolicyDecision(True, f"{tool_name} path is inside workspace")
+
+    def _check_repo_map(self, tool_args: dict[str, Any]) -> PolicyDecision:
+        query = tool_args.get("query")
+        if query is not None and not isinstance(query, str):
+            return PolicyDecision(False, "query must be a string or null")
+        max_tokens = tool_args.get("max_tokens", 1200)
+        if (
+            not isinstance(max_tokens, int)
+            or isinstance(max_tokens, bool)
+            or max_tokens <= 0
+        ):
+            return PolicyDecision(False, "max_tokens must be a positive integer")
+        if max_tokens > 8000:
+            return PolicyDecision(False, "max_tokens exceeds repo_map policy limit")
+        refresh = tool_args.get("refresh", False)
+        if not isinstance(refresh, bool):
+            return PolicyDecision(False, "refresh must be a boolean")
+        return PolicyDecision(True, "repo_map query is read-only and allowed")
 
     def _check_edit_file(
         self,

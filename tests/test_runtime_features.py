@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from harnesscoder.core.policy import ToolPolicy
+from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner
 from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.tools import ToolRegistry
@@ -88,6 +89,30 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.ok, result.output)
         self.assertEqual(result.metadata["returncode"], 0)
 
+    def test_repo_map_extracts_python_symbols_and_omits_local_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "models.toml").write_text("api_key = 'secret'\n", encoding="utf-8")
+            (root / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+            (root / "billing.py").write_text(
+                "import decimal\n\n"
+                "class Invoice:\n"
+                "    def total(self, cents):\n"
+                "        return cents\n\n"
+                "def prorate_monthly():\n"
+                "    return 1\n",
+                encoding="utf-8",
+            )
+
+            result = build_repo_map(root, query="invoice prorate", max_tokens=600)
+
+        self.assertIn("billing.py", result.text)
+        self.assertIn("class Invoice", result.text)
+        self.assertIn("prorate_monthly", result.text)
+        self.assertNotIn("models.toml", result.text)
+        self.assertNotIn(".env", result.text)
+        self.assertEqual(result.metadata["files_indexed"], 1)
+
 
 class PolicyTests(unittest.TestCase):
     def test_allowed_tools_can_scope_a_run(self) -> None:
@@ -126,6 +151,22 @@ class PolicyTests(unittest.TestCase):
             Path.cwd(),
         )
         self.assertFalse(decision.allowed)
+
+    def test_repo_map_policy_is_read_only_and_bounded(self) -> None:
+        policy = ToolPolicy()
+        allowed = policy.check(
+            "repo_map",
+            {"query": "Invoice", "max_tokens": 1200, "refresh": False},
+            Path.cwd(),
+        )
+        denied = policy.check(
+            "repo_map",
+            {"query": "Invoice", "max_tokens": 100_000},
+            Path.cwd(),
+        )
+
+        self.assertTrue(allowed.allowed, allowed.reason)
+        self.assertFalse(denied.allowed)
 
 
 class ReplayTests(unittest.TestCase):
@@ -227,6 +268,33 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertIn("task/explored_files", state["memory_blocks"])
         self.assertIn("read README.md", state["memory_blocks"]["task/explored_files"]["value"])
 
+    def test_runner_injects_repo_map_in_pack_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "class Target:\n"
+                "    pass\n\n"
+                "def solve_target():\n"
+                "    return Target()\n",
+                encoding="utf-8",
+            )
+            runner = AgentRunner(
+                model=_CaptureContextModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=2,
+                context_mode="pack",
+            )
+
+            result = runner.run("Find Target.")
+            summary = summarize_trace(result.trace_path)
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("repo_map", _CaptureContextModel.last_payload)
+        self.assertIn("app.py", _CaptureContextModel.last_payload)
+        self.assertEqual(summary["metrics"]["repo_map_built_count"], 1)
+        self.assertEqual(summary["metrics"]["repo_map_injected_count"], 1)
+
 
 class _ReadThenFinishModel:
     name = "read-then-finish"
@@ -242,6 +310,19 @@ class _ReadThenFinishModel:
         return ModelAction(
             kind="finish",
             rationale="Enough context.",
+            content="done",
+        )
+
+
+class _CaptureContextModel:
+    name = "capture-context"
+    last_payload = ""
+
+    def next_action(self, _state: AgentState, context=None) -> ModelAction:
+        self.__class__.last_payload = context.to_model_input()[1]["content"]
+        return ModelAction(
+            kind="finish",
+            rationale="Captured context.",
             content="done",
         )
 

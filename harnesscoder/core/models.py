@@ -15,6 +15,7 @@ from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 MODEL_TOOL_NAMES = (
     "read_file",
     "search_code",
+    "repo_map",
     "write_file",
     "edit_file",
     "run_tests",
@@ -256,9 +257,12 @@ Allowed finish action:
   "content": "final answer to the user"
 }
 
+Use only tools listed in the current task's available_tools.
+
 Tool schemas:
 - read_file(path: string, offset: int = 0, limit: int = 200)
 - search_code(query: string, path: string = ".")
+- repo_map(query: string | null = null, max_tokens: int = 1200, refresh: boolean = false)
 - write_file(path: string, content: string, overwrite: boolean = false)
 - edit_file(path: string, old: string, new: string)
 - run_tests(cmd: string | null = null, timeout: int = 60)

@@ -103,6 +103,42 @@ Acceptance:
 - Markdown reports show memory/compression metrics.
 - Matrix runs support context-mode ablations.
 
+## 0.9.0 Lightweight RepoMap
+
+Goal: add a clean-room repository map for context governance without cloning a
+large external indexing system.
+
+Scope:
+
+```text
+harnesscoder/core/repo_map.py
+- Python AST extraction for imports, classes, functions, and signatures
+- fallback file list plus regex symbols for non-Python text files
+- max_tokens / max_files bounds
+- simple query-overlap ranking
+```
+
+Tool:
+
+```text
+repo_map(query=None, max_tokens=1200, refresh=False)
+```
+
+Switch:
+
+```text
+--repo-map-mode none|auto
+```
+
+Acceptance:
+
+- Trace records `repo_map_built` and `repo_map_used`.
+- `pack` and `memory` prompt modes can inject RepoMap when
+  `--repo-map-mode auto` is used.
+- Matrix/report metrics include RepoMap build/use/injection counts.
+- Unit tests cover AST extraction, secret-file omission, policy bounds, and
+  prompt injection without a real API call.
+
 ## Non-Goals
 
 - Subagents.

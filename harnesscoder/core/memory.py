@@ -147,6 +147,26 @@ def apply_memory_reducer(
                 step,
             )
 
+    if result.tool_name == "repo_map" and result.ok:
+        query = _metadata_text(result, "query", "")
+        rendered = result.metadata.get("files_rendered")
+        indexed = result.metadata.get("files_indexed")
+        summary = f"repo_map query={query!r} rendered={rendered} indexed={indexed}"
+        changed += _append_unique(
+            blocks,
+            "task/explored_files",
+            summary,
+            step,
+        )
+        files = result.metadata.get("files")
+        if isinstance(files, list) and files:
+            changed += _append_unique(
+                blocks,
+                "task/relevant_symbols",
+                "repo_map files: " + ", ".join(str(path) for path in files[:12]),
+                step,
+            )
+
     if result.tool_name in {"edit_file", "write_file"} and result.ok:
         path = _metadata_text(result, "path", "<unknown>")
         if result.metadata.get("changed") is True or result.metadata.get("created") is True:

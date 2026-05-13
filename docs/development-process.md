@@ -966,3 +966,36 @@ Interview angle:
 This keeps the harness honest. Direct provider support makes model failures,
 prompt failures, and tool-loop failures easier to separate than a hidden gateway
 translation layer.
+
+## 0.9.0 Milestone
+
+### 43. RepoMap Makes Repository Context A Governed Input
+
+Problem:
+Search and bounded reads are useful, but larger repositories still need a
+compact map of likely-relevant files and symbols. Pulling in a full external
+repo-map implementation would blur the harness story and make evaluation harder
+to explain.
+
+Decision:
+Add a clean-room `harnesscoder/core/repo_map.py`. It indexes text files while
+omitting local secrets such as `.env` and `models.toml`, extracts Python imports,
+classes, functions, and signatures through `ast`, falls back to regex symbols
+for other text files, ranks entries by query overlap, and renders within
+`max_tokens` / `max_files` bounds.
+
+The runtime exposes this as both:
+
+```text
+repo_map(query=None, max_tokens=1200, refresh=False)
+```
+
+and prompt injection for `--context-mode pack|memory` when
+`--repo-map-mode auto` is enabled. Traces record `repo_map_built` and
+`repo_map_used`, replay metrics count RepoMap use/injection, and matrix reports
+surface those metrics.
+
+Interview angle:
+RepoMap is not "another feature"; it is the repository-level context governance
+layer. It lets the project explain whether the agent found the right file
+sooner, used fewer broad reads, or changed tool behavior under an ablation.

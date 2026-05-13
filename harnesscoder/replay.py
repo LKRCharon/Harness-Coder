@@ -219,6 +219,10 @@ def _metrics_summary(
         "context_injected_count": _context_injected_count(records),
         "estimated_context_tokens": _estimated_context_tokens(records),
         "memory_updated_count": _event_count(records, "memory_updated"),
+        "repo_map_built_count": _event_count(records, "repo_map_built"),
+        "repo_map_used_count": _event_count(records, "repo_map_used"),
+        "repo_map_injected_count": _repo_map_injected_count(records),
+        "first_repo_map_target_step": _first_repo_map_target_step(records),
         "compression_count": _compression_count(records),
         "hot_observation_count": _hot_observation_count(records),
         "cold_summary_chars": _cold_summary_chars(records),
@@ -263,6 +267,37 @@ def _estimated_context_tokens(records: list[JsonRecord]) -> int:
             continue
         total += _as_int(record.get("estimated_tokens"))
     return total
+
+
+def _repo_map_injected_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and record.get("repo_map_injected") is True
+    )
+
+
+def _first_repo_map_target_step(records: list[JsonRecord]) -> int | None:
+    repo_map_files: set[str] = set()
+    for record in records:
+        if record.get("type") != "repo_map_used":
+            continue
+        files = record.get("files")
+        if isinstance(files, list):
+            repo_map_files.update(path for path in files if isinstance(path, str))
+
+    if not repo_map_files:
+        return None
+
+    for index, record in enumerate(records):
+        result = _tool_result(record)
+        if result is None or result.get("tool_name") != "read_file":
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("path") in repo_map_files:
+            return _tool_result_count_between(records, -1, index)
+    return None
 
 
 def _compression_count(records: list[JsonRecord]) -> int:

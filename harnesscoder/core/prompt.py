@@ -20,6 +20,7 @@ class ContextAssembly:
     recent_observations: list[dict[str, Any]]
     packed_context: dict[str, Any] | None
     working_memory: str | None
+    repo_map: str | None
     context_injected: bool
     estimated_tokens: int
 
@@ -33,6 +34,8 @@ class ContextAssembly:
             payload["packed_context"] = self.packed_context
         if self.working_memory is not None:
             payload["working_memory"] = self.working_memory
+        if self.repo_map is not None:
+            payload["repo_map"] = self.repo_map
         return [
             {"role": "system", "content": self.system_instructions},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -47,6 +50,7 @@ class ContextAssembly:
             "available_tools": list(self.available_tools),
             "recent_observation_count": len(self.recent_observations),
             "working_memory_injected": self.working_memory is not None,
+            "repo_map_injected": self.repo_map is not None,
         }
 
 
@@ -57,6 +61,7 @@ def assemble_context(
     available_tools: list[str],
     context_pack: dict[str, Any],
     context_mode: ContextMode,
+    repo_map: str | None = None,
 ) -> ContextAssembly:
     if context_mode not in {"none", "pack", "memory"}:
         raise ValueError(f"unsupported context mode: {context_mode}")
@@ -75,6 +80,7 @@ def assemble_context(
         if context_mode == "memory"
         else None
     )
+    injected_repo_map = repo_map if context_mode in {"pack", "memory"} else None
 
     assembly = ContextAssembly(
         mode=context_mode,
@@ -84,6 +90,7 @@ def assemble_context(
         recent_observations=recent_observations,
         packed_context=packed_context,
         working_memory=working_memory,
+        repo_map=injected_repo_map,
         context_injected=context_mode in {"pack", "memory"},
         estimated_tokens=0,
     )
@@ -96,6 +103,7 @@ def assemble_context(
         recent_observations=assembly.recent_observations,
         packed_context=assembly.packed_context,
         working_memory=assembly.working_memory,
+        repo_map=assembly.repo_map,
         context_injected=assembly.context_injected,
         estimated_tokens=estimated_tokens,
     )

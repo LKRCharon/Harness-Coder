@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from harnesscoder.core.checkpoint import (
@@ -15,9 +16,13 @@ from harnesscoder.core.memory import apply_memory_reducer, memory_blocks_to_reco
 from harnesscoder.core.models import MODEL_SYSTEM_PROMPT, MODEL_TOOL_NAMES, ModelAdapter
 from harnesscoder.core.policy import PolicyDecision, ToolPolicy
 from harnesscoder.core.prompt import ContextMode, assemble_context
+from harnesscoder.core.repo_map import RepoMapCache
 from harnesscoder.core.state import AgentState, ModelAction, ToolObservation
 from harnesscoder.core.tools import ToolRegistry, ToolResult
 from harnesscoder.core.trace import TraceWriter
+
+
+RepoMapMode = Literal["none", "auto"]
 
 
 @dataclass(slots=True)
@@ -38,6 +43,8 @@ class AgentRunner:
         context_mode: ContextMode = "none",
         policy: ToolPolicy | None = None,
         tools: ToolRegistry | None = None,
+        repo_map_max_tokens: int = 1200,
+        repo_map_mode: RepoMapMode = "auto",
     ) -> None:
         self.model = model
         self.cwd = cwd.resolve()
@@ -46,6 +53,9 @@ class AgentRunner:
         self.context_mode = context_mode
         self.policy = policy or ToolPolicy()
         self.tools = tools or ToolRegistry(self.cwd)
+        self.repo_map = RepoMapCache(self.cwd)
+        self.repo_map_max_tokens = repo_map_max_tokens
+        self.repo_map_mode = repo_map_mode
 
     def run(self, task: str) -> RunResult:
         run_id = self._new_run_id()
@@ -65,6 +75,8 @@ class AgentRunner:
             model=getattr(self.model, "name", type(self.model).__name__),
             max_iterations=self.max_iterations,
             context_mode=self.context_mode,
+            repo_map_max_tokens=self.repo_map_max_tokens,
+            repo_map_mode=self.repo_map_mode,
         )
 
         return self._run_loop(state, trace)
@@ -102,12 +114,31 @@ class AgentRunner:
         status = "success"
         while not state.done and state.iterations < state.max_iterations:
             context_pack = build_context_pack(state)
+            repo_map_result = None
+            if self.context_mode in {"pack", "memory"} and self.repo_map_mode == "auto":
+                repo_map_result = self.repo_map.render(
+                    query=state.task,
+                    max_tokens=self.repo_map_max_tokens,
+                )
+                if repo_map_result.metadata.get("built") is True:
+                    trace.emit(
+                        "repo_map_built",
+                        reason="context_assembly",
+                        **repo_map_result.metadata,
+                    )
+                trace.emit(
+                    "repo_map_used",
+                    reason="context_assembly",
+                    injected=True,
+                    **repo_map_result.metadata,
+                )
             context = assemble_context(
                 state=state,
                 system_instructions=MODEL_SYSTEM_PROMPT,
-                available_tools=list(MODEL_TOOL_NAMES),
+                available_tools=self._available_tools(),
                 context_pack=context_pack,
                 context_mode=self.context_mode,
+                repo_map=repo_map_result.text if repo_map_result is not None else None,
             )
             trace.emit(
                 "context_packed",
@@ -186,6 +217,21 @@ class AgentRunner:
                     tool_name=result.tool_name,
                     updated_blocks=changed_memory,
                     memory_blocks=memory_blocks_to_records(state.memory_blocks),
+                )
+            if result.tool_name == "repo_map" and result.ok:
+                if result.metadata.get("built") is True:
+                    trace.emit(
+                        "repo_map_built",
+                        reason="tool_call",
+                        call_id=result.call_id,
+                        **result.metadata,
+                    )
+                trace.emit(
+                    "repo_map_used",
+                    reason="tool_call",
+                    call_id=result.call_id,
+                    injected=False,
+                    **result.metadata,
                 )
             if result.tool_name == "run_tests":
                 trace.emit(
@@ -278,6 +324,15 @@ class AgentRunner:
             if previous.get("tool_args") == action.tool_args:
                 return True
         return False
+
+    def _available_tools(self) -> list[str]:
+        if self.policy.allowed_tools is None:
+            return list(MODEL_TOOL_NAMES)
+        return [
+            tool_name
+            for tool_name in MODEL_TOOL_NAMES
+            if tool_name in self.policy.allowed_tools
+        ]
 
     def _emit_state_updated(self, trace: TraceWriter, state: AgentState) -> None:
         trace.emit("state_updated", state=state.snapshot())

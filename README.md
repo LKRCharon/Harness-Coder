@@ -20,16 +20,17 @@ policy-gated loop.
 
 ## Current Status
 
-Version `0.8.4` is a runnable local runtime with real bugfix and minimal
+Version `0.9.0` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
-compression metrics, checkpoint/resume support, and a
+compression metrics, lightweight RepoMap, checkpoint/resume support, and a
 lightweight TUI with live refresh. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
   - `read_file(path, offset=0, limit=200)`
   - `search_code(query, path=".")`
+  - `repo_map(query=None, max_tokens=1200, refresh=false)`
   - `write_file(path, content, overwrite=false)`
   - `edit_file(path, old, new)`
   - `run_tests(cmd=None, timeout=60)`
@@ -38,6 +39,8 @@ lightweight TUI with live refresh. It includes:
 - JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`.
 - `context_packed`, `checkpoint_created`, `run_resumed`, and `test_result`
   events for reliability-oriented replay.
+- `repo_map_built` and `repo_map_used` events for repository-level context
+  governance.
 - Trace replay summaries through `python -m harnesscoder.replay`.
 - A minimal eval harness that runs cases, executes tests, scores results, and
   renders a Markdown report.
@@ -88,6 +91,7 @@ commands for direct tools and runtime controls:
 /base-url https://your-openai-compatible-endpoint.example
 /read README.md
 /search HarnessCoder
+/repo-map HarnessCoder
 /edit README.md old new
 /test python -m unittest discover -s tests
 /run git status --short
@@ -96,6 +100,35 @@ commands for direct tools and runtime controls:
 
 The current TUI is intentionally small: it is a runnable control surface for the
 runtime and eval harness, not a full Claude Code clone.
+
+## Context Governance
+
+HarnessCoder's context governance has three task-local layers:
+
+- Packed context summarizes hot observations, cold trace history, modified
+  files, and budget.
+- Working memory stores task-scoped facts such as failing tests, explored files,
+  relevant symbols, patch summaries, verified facts, and open questions.
+- RepoMap builds a bounded repository index from Python AST symbols, imports,
+  classes, functions, and fallback regex symbols for non-Python text files.
+
+Use prompt modes to ablate these layers:
+
+```bash
+python -m harnesscoder --context-mode none "inspect this repo"
+python -m harnesscoder --context-mode pack "inspect this repo"
+python -m harnesscoder --context-mode memory "inspect this repo"
+```
+
+RepoMap injection is enabled by default for `pack` and `memory` modes and can be
+disabled independently:
+
+```bash
+python -m harnesscoder \
+  --context-mode pack \
+  --repo-map-mode none \
+  "inspect this repo"
+```
 
 ## OpenAI-Compatible Providers
 
@@ -262,9 +295,10 @@ python -m harnesscoder \
 
 The matrix report compares pass rate, test pass rate, verifier pass rate,
 average tool calls, repeated reads, invalid calls, policy denials, tool
-failures, memory/compression metrics, and failure categories. Each profile/case
-run still keeps its own trace. If a real-model profile cannot initialize, the
-matrix records the profile error instead of hiding the reason.
+failures, memory/compression metrics, RepoMap use/injection metrics, and failure
+categories. Each profile/case run still keeps its own trace. If a real-model
+profile cannot initialize, the matrix records the profile error instead of
+hiding the reason.
 
 Compare context modes:
 
@@ -289,6 +323,26 @@ python -m harnesscoder \
   --context-mode memory \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-real-memory.md
+```
+
+Compare RepoMap injection:
+
+```bash
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles deepseek \
+  --context-mode pack \
+  --repo-map-mode none \
+  --eval eval/hc_bench_20.json \
+  --eval-report .harnesscoder/reports/hc-bench-20-without-repo-map.md
+
+python -m harnesscoder \
+  --model-config models.toml \
+  --model-profiles deepseek \
+  --context-mode pack \
+  --repo-map-mode auto \
+  --eval eval/hc_bench_20.json \
+  --eval-report .harnesscoder/reports/hc-bench-20-with-repo-map.md
 ```
 
 Run HC-Bench-20 with the deterministic local oracle:

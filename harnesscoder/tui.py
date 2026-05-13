@@ -19,7 +19,7 @@ from harnesscoder.core.models import (
     ScriptedModel,
 )
 from harnesscoder.core.policy import ToolPolicy
-from harnesscoder.core.runner import AgentRunner, RunResult
+from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
 from harnesscoder.core.tools import ToolRegistry
 
 
@@ -36,6 +36,7 @@ class TuiConfig:
     openai_model: str | None
     openai_api_key_env: str
     max_iterations: int
+    repo_map_mode: RepoMapMode = "auto"
 
 
 @dataclass(slots=True)
@@ -301,6 +302,7 @@ class HarnessCoderTui:
                 cwd=active.config.cwd,
                 trace_root=active.config.trace_root,
                 max_iterations=active.config.max_iterations,
+                repo_map_mode=active.config.repo_map_mode,
             )
             result = runner.run(active.prompt)
         except Exception as exc:
@@ -363,6 +365,7 @@ class HarnessCoderTui:
             openai_model=self.config.openai_model,
             openai_api_key_env=self.config.openai_api_key_env,
             max_iterations=self.config.max_iterations,
+            repo_map_mode=self.config.repo_map_mode,
         )
 
     def _existing_trace_paths(self, config: TuiConfig) -> set[Path]:
@@ -449,6 +452,7 @@ class HarnessCoderTui:
             "test": self._cmd_test,
             "run": self._cmd_run,
             "trace": self._cmd_trace,
+            "repo-map": self._cmd_repo_map,
         }
 
         handler = handlers.get(command)
@@ -480,6 +484,7 @@ class HarnessCoderTui:
                         "/cwd [path] - show or change repository cwd",
                         "/max-iterations [n] - show or change loop limit",
                         "/tools - list direct slash tools",
+                        "/repo-map [query] - call repo_map",
                         "/read <path> [offset] [limit] - call read_file",
                         "/search <query> [path] - call search_code",
                         "/edit <path> <old> <new> - call edit_file exact replacement",
@@ -503,6 +508,7 @@ class HarnessCoderTui:
                         f"model: {self.config.openai_model or '-'}",
                         f"base_url: {self.config.openai_base_url}",
                         f"max_iterations: {self.config.max_iterations}",
+                        f"repo_map_mode: {self.config.repo_map_mode}",
                         f"trace_root: {self.config.trace_root}",
                     ]
                 ),
@@ -591,8 +597,8 @@ class HarnessCoderTui:
             Message(
                 "system",
                 "Direct tools: /read -> read_file, /search -> search_code, "
-                "/edit -> edit_file, /test -> run_tests, /run -> run_command "
-                "with policy gate.",
+                "/repo-map -> repo_map, /edit -> edit_file, /test -> run_tests, "
+                "/run -> run_command with policy gate.",
             )
         )
 
@@ -610,6 +616,13 @@ class HarnessCoderTui:
             return
         path = args[1] if len(args) > 1 else "."
         self._direct_tool("search_code", {"query": args[0], "path": path})
+
+    def _cmd_repo_map(self, args: list[str], _line: str) -> None:
+        query = " ".join(args).strip() or None
+        self._direct_tool(
+            "repo_map",
+            {"query": query, "max_tokens": 1200, "refresh": False},
+        )
 
     def _cmd_edit(self, args: list[str], _line: str) -> None:
         if len(args) < 3:

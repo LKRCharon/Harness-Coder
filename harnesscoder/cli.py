@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Prompt context mode: none, pack, or memory.",
     )
     parser.add_argument(
+        "--repo-map-mode",
+        choices=["none", "auto"],
+        default=os.environ.get("HARNESSCODER_REPO_MAP_MODE", "auto"),
+        help="RepoMap prompt injection mode. Defaults to auto.",
+    )
+    parser.add_argument(
         "--trace-root",
         default=".harnesscoder/runs",
         help="Directory where run traces are written.",
@@ -149,6 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trace_root=Path(args.trace_root),
             max_iterations=args.max_iterations,
             context_mode=args.context_mode,
+            repo_map_mode=args.repo_map_mode,
         )
         result = runner.resume_from_checkpoint(args.resume)
         print(result.final_answer)
@@ -175,6 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 trace_root=Path(args.eval_trace_root),
                 max_iterations=args.max_iterations,
                 context_mode=args.context_mode,
+                repo_map_mode=args.repo_map_mode,
             )
             report = render_markdown_matrix(matrix)
             if args.eval_report:
@@ -201,6 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_iterations=args.max_iterations,
             model=model,
             context_mode=args.context_mode,
+            repo_map_mode=args.repo_map_mode,
         )
         report = render_markdown_report(results)
         if args.eval_report:
@@ -224,6 +233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 openai_model=args.openai_model,
                 openai_api_key_env=args.openai_api_key_env,
                 max_iterations=args.max_iterations,
+                repo_map_mode=args.repo_map_mode,
             ),
             initial_message=task or None,
         )
@@ -237,6 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         trace_root=Path(args.trace_root),
         max_iterations=args.max_iterations,
         context_mode=args.context_mode,
+        repo_map_mode=args.repo_map_mode,
     )
     result = runner.run(task)
 

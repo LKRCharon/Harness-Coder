@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from harnesscoder.core.repo_map import RepoMapCache
+
 
 MAX_TOOL_OUTPUT = 16_000
 DEFAULT_TEST_COMMAND = "python -m unittest discover"
@@ -42,9 +44,11 @@ ToolFn = Callable[..., ToolResult]
 class ToolRegistry:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
+        self._repo_map = RepoMapCache(self.cwd)
         self._tools: dict[str, ToolFn] = {
             "read_file": self.read_file,
             "search_code": self.search_code,
+            "repo_map": self.repo_map,
             "write_file": self.write_file,
             "edit_file": self.edit_file,
             "run_tests": self.run_tests,
@@ -164,6 +168,36 @@ class ToolRegistry:
             )
 
         return self._search_code_python(call_id=call_id, query=query, target=target)
+
+    def repo_map(
+        self,
+        call_id: str,
+        query: str | None = None,
+        max_tokens: int = 1200,
+        refresh: bool = False,
+    ) -> ToolResult:
+        tool_name = "repo_map"
+        if query is not None and not isinstance(query, str):
+            return ToolResult(call_id, tool_name, False, "", "query must be a string or null")
+        if not isinstance(refresh, bool):
+            return ToolResult(call_id, tool_name, False, "", "refresh must be a boolean")
+
+        try:
+            result = self._repo_map.render(
+                query=query,
+                max_tokens=max_tokens,
+                refresh=refresh,
+            )
+        except (TypeError, ValueError) as exc:
+            return ToolResult(call_id, tool_name, False, "", f"bad repo_map arguments: {exc}")
+
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            ok=True,
+            output=_truncate(result.text),
+            metadata=result.metadata,
+        )
 
     def run_command(
         self,

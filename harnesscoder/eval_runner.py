@@ -21,7 +21,7 @@ from harnesscoder.core.models import (
 )
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
-from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.runner import AgentRunner, RepoMapMode
 from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
 
@@ -188,6 +188,7 @@ def run_eval_cases(
     max_iterations: int = 8,
     model: ModelAdapter | None = None,
     context_mode: ContextMode = "none",
+    repo_map_mode: RepoMapMode = "auto",
 ) -> list[EvalResult]:
     root = Path(workspace_root).resolve()
     resolved_cases_path = _resolve_cases_path(cases_path, root)
@@ -208,6 +209,7 @@ def run_eval_cases(
             trace_root=Path(trace_root),
             max_iterations=effective_max_iterations,
             context_mode=context_mode,
+            repo_map_mode=repo_map_mode,
             policy=ToolPolicy(set(case.allowed_tools) if case.allowed_tools else None),
         )
         run_result = runner.run(case.task)
@@ -296,6 +298,7 @@ def run_eval_matrix(
     trace_root: str | Path = ".harnesscoder/eval-runs",
     max_iterations: int = 8,
     context_mode: ContextMode = "none",
+    repo_map_mode: RepoMapMode = "auto",
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
     for profile in profiles:
@@ -319,6 +322,7 @@ def run_eval_matrix(
             max_iterations=max_iterations,
             model=model,
             context_mode=context_mode,
+            repo_map_mode=repo_map_mode,
         )
         matrix.append(
             EvalMatrixProfileResult(
@@ -346,6 +350,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     context_injections = _sum_metric(results, "context_injected_count")
     estimated_context_tokens = _sum_metric(results, "estimated_context_tokens")
     memory_updates = _sum_metric(results, "memory_updated_count")
+    repo_map_built = _sum_metric(results, "repo_map_built_count")
+    repo_map_used = _sum_metric(results, "repo_map_used_count")
+    repo_map_injected = _sum_metric(results, "repo_map_injected_count")
+    first_repo_map_target_step = _average_nullable_metric(
+        results,
+        "first_repo_map_target_step",
+    )
     compression_count = _sum_metric(results, "compression_count")
     hot_observation_count = _sum_metric(results, "hot_observation_count")
     cold_summary_chars = _sum_metric(results, "cold_summary_chars")
@@ -379,6 +390,10 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Context injections | {context_injections} |",
         f"| Estimated context tokens | {estimated_context_tokens} |",
         f"| Memory updates | {memory_updates} |",
+        f"| RepoMap builds | {repo_map_built} |",
+        f"| RepoMap uses | {repo_map_used} |",
+        f"| RepoMap injections | {repo_map_injected} |",
+        f"| Avg first RepoMap target read step | {_format_nullable_number(first_repo_map_target_step)} |",
         f"| Compression count | {compression_count} |",
         f"| Hot observations | {hot_observation_count} |",
         f"| Cold summary chars | {cold_summary_chars} |",
@@ -499,8 +514,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | Compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -518,6 +533,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         "n/a",
                         "n/a",
                         "n/a",
+                        "0",
+                        "0",
                         "0",
                         "0",
                         "0",
@@ -559,6 +576,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "context_injected_count")),
                     str(_sum_metric(results, "estimated_context_tokens")),
                     str(_sum_metric(results, "memory_updated_count")),
+                    str(_sum_metric(results, "repo_map_used_count")),
+                    str(_sum_metric(results, "repo_map_injected_count")),
                     str(_sum_metric(results, "compression_count")),
                     _md_cell(_format_breakdown(failure_breakdown)),
                 ]
@@ -571,8 +590,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
             "",
             "## Category Summary",
             "",
-            "| Profile | Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | Failure breakdown |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Profile | Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | RepoMap used | Failure breakdown |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for profile_result in matrix:
@@ -604,6 +623,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                             _average_metric(category_results, "average_tool_calls")
                         ),
                         str(_sum_metric(category_results, "policy_denial_count")),
+                        str(_sum_metric(category_results, "repo_map_used_count")),
                         _md_cell(_format_breakdown(category_failures)),
                     ]
                 )
