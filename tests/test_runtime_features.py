@@ -401,6 +401,109 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["metrics"]["repo_map_built_count"], 1)
         self.assertEqual(summary["metrics"]["repo_map_injected_count"], 1)
 
+    def test_finish_grace_accepts_finish_after_successful_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            runner = AgentRunner(
+                model=_FinishOnGraceModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Run tests, then finish.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 1)
+        self.assertEqual(summary["metrics"]["finish_grace_success_count"], 1)
+        self.assertTrue(
+            any(
+                record.get("type") == "run_finished"
+                and record.get("finish_grace") is True
+                for record in records
+            )
+        )
+
+    def test_finish_grace_rejects_tool_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            runner = AgentRunner(
+                model=_ToolOnGraceModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Run tests, then try another tool.")
+            summary = summarize_trace(result.trace_path)
+
+        self.assertEqual(result.status, "max_iterations")
+        self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 1)
+        self.assertEqual(summary["metrics"]["finish_grace_success_count"], 0)
+        self.assertEqual(summary["failure_category"], "max_iterations")
+
+    def test_finish_grace_is_not_offered_without_successful_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            runner = AgentRunner(
+                model=_ReadOnlyModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Read only.")
+            summary = summarize_trace(result.trace_path)
+
+        self.assertEqual(result.status, "max_iterations")
+        self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 0)
+        self.assertEqual(summary["metrics"]["finish_grace_success_count"], 0)
+
+    def test_finish_grace_is_not_offered_after_later_failed_test(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            runner = AgentRunner(
+                model=_PassThenFailTestsModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=2,
+            )
+
+            result = runner.run("Run passing then failing tests.")
+            summary = summarize_trace(result.trace_path)
+
+        self.assertEqual(result.status, "max_iterations")
+        self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 0)
+        self.assertEqual(summary["metrics"]["finish_grace_success_count"], 0)
+
 
 class _ReadThenFinishModel:
     name = "read-then-finish"
@@ -430,6 +533,79 @@ class _CaptureContextModel:
             kind="finish",
             rationale="Captured context.",
             content="done",
+        )
+
+
+class _FinishOnGraceModel:
+    name = "finish-on-grace"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.latest_observation_for("run_tests") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Run tests.",
+                tool_name="run_tests",
+                tool_args={"cmd": "python -m unittest discover"},
+            )
+        return ModelAction(
+            kind="finish",
+            rationale="Tests passed.",
+            content="done",
+        )
+
+
+class _ToolOnGraceModel:
+    name = "tool-on-grace"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.latest_observation_for("run_tests") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Run tests.",
+                tool_name="run_tests",
+                tool_args={"cmd": "python -m unittest discover"},
+            )
+        return ModelAction(
+            kind="tool",
+            rationale="Try a tool after tests.",
+            tool_name="read_file",
+            tool_args={"path": "README.md"},
+        )
+
+
+class _ReadOnlyModel:
+    name = "read-only"
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        return ModelAction(
+            kind="tool",
+            rationale="Read README.",
+            tool_name="read_file",
+            tool_args={"path": "README.md"},
+        )
+
+
+class _PassThenFailTestsModel:
+    name = "pass-then-fail-tests"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        tests = [
+            observation
+            for observation in state.observations
+            if observation.tool_name == "run_tests"
+        ]
+        if not tests:
+            return ModelAction(
+                kind="tool",
+                rationale="Run passing tests.",
+                tool_name="run_tests",
+                tool_args={"cmd": "python -m unittest discover"},
+            )
+        return ModelAction(
+            kind="tool",
+            rationale="Run a failing command.",
+            tool_name="run_tests",
+            tool_args={"cmd": "python -m unittest missing_module"},
         )
 
 

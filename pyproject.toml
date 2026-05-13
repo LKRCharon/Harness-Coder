@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "harnesscoder"
-version = "1.0.0"
+version = "1.0.1"
 description = "A local event-sourced coding agent harness for real repository tasks."
 readme = "README.md"
 requires-python = ">=3.11"

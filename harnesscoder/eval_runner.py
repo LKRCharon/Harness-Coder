@@ -114,6 +114,8 @@ class EvalResult:
     verifier_timed_out: bool = False
     verifier_duration_seconds: float = 0.0
     verifier_passed: bool = True
+    patch_success: bool = False
+    agent_success: bool = False
     failure_category: str = "incomplete"
     metrics: dict[str, Any] = field(default_factory=dict)
     trace_summary: dict[str, Any] = field(default_factory=dict)
@@ -223,6 +225,8 @@ def run_eval_cases(
             case,
             verifier_result,
         )
+        patch_success = test_passed and verifier_passed
+        agent_success = run_result.status == "success"
         passed, reason = _score_case(
             case,
             run_result.status,
@@ -284,6 +288,8 @@ def run_eval_cases(
                     verifier_result.duration_seconds if verifier_result else 0.0
                 ),
                 verifier_passed=verifier_passed,
+                patch_success=patch_success,
+                agent_success=agent_success,
                 failure_category=_failure_category_from_summary(trace_summary),
                 metrics=metrics,
                 trace_summary=trace_summary,
@@ -346,8 +352,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     passed = sum(1 for result in results if result.passed)
     failed = total - passed
     task_successes = sum(1 for result in results if result.runner_status == "success")
+    agent_successes = sum(1 for result in results if result.agent_success)
     test_passes = sum(1 for result in results if result.test_passed)
     verifier_passes = sum(1 for result in results if result.verifier_passed)
+    patch_successes = sum(1 for result in results if result.patch_success)
+    patch_success_agent_failures = sum(
+        1 for result in results if result.patch_success and not result.agent_success
+    )
     avg_tool_calls = _average_metric(results, "average_tool_calls")
     repeated_reads = _sum_metric(results, "repeated_read_count")
     invalid_tool_calls = _sum_metric(results, "invalid_tool_call_count")
@@ -371,6 +382,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     search_to_edit_steps = _average_nullable_metric(results, "search_to_edit_steps")
     edit_to_test_steps = _average_nullable_metric(results, "edit_to_test_steps")
     checkpoints = _sum_metric(results, "checkpoint_created_count")
+    finish_grace_attempts = _sum_metric(results, "finish_grace_attempt_count")
+    finish_grace_successes = _sum_metric(results, "finish_grace_success_count")
     resume_rate = _average_nullable_metric(results, "resume_success_rate")
     failure_breakdown = Counter(result.failure_category for result in results)
     category_breakdown = _category_summary(results)
@@ -386,6 +399,9 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         "| Metric | Value |",
         "| --- | --- |",
         f"| Task success rate | {_format_rate(task_successes, total)} |",
+        f"| Agent success rate | {_format_rate(agent_successes, total)} |",
+        f"| Patch success rate | {_format_rate(patch_successes, total)} |",
+        f"| Patch success but agent failed | {patch_success_agent_failures} |",
         f"| Test pass rate | {_format_rate(test_passes, total)} |",
         f"| Verifier pass rate | {_format_rate(verifier_passes, total)} |",
         f"| Avg tool calls | {_format_number(avg_tool_calls)} |",
@@ -408,17 +424,25 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Avg search-to-edit steps | {_format_nullable_number(search_to_edit_steps)} |",
         f"| Avg edit-to-test steps | {_format_nullable_number(edit_to_test_steps)} |",
         f"| Checkpoints | {checkpoints} |",
+        f"| Finish grace attempts | {finish_grace_attempts} |",
+        f"| Finish grace successes | {finish_grace_successes} |",
         f"| Resume success rate | {_format_nullable_rate(resume_rate)} |",
         f"| Failure category breakdown | {_format_breakdown(failure_breakdown)} |",
         "",
         "## Category Summary",
         "",
-        "| Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | Failures |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | Failures |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for category, category_results in category_breakdown.items():
         category_total = len(category_results)
         category_passed = sum(1 for result in category_results if result.passed)
+        category_agent_success = sum(
+            1 for result in category_results if result.agent_success
+        )
+        category_patch_success = sum(
+            1 for result in category_results if result.patch_success
+        )
         category_test_passed = sum(1 for result in category_results if result.test_passed)
         category_verifier_passed = sum(
             1 for result in category_results if result.verifier_passed
@@ -431,6 +455,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     _md_cell(category),
                     str(category_total),
                     _format_rate(category_passed, category_total),
+                    _format_rate(category_agent_success, category_total),
+                    _format_rate(category_patch_success, category_total),
                     _format_rate(category_test_passed, category_total),
                     _format_rate(category_verifier_passed, category_total),
                     _format_number(_average_metric(category_results, "average_tool_calls")),
@@ -445,8 +471,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
             "",
             "## Runs",
             "",
-            "| Case | Category | Result | Agent | Test | Verifier | Failure | Workspace | Run | Tools |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Case | Category | Result | Agent | Patch | Test | Verifier | Failure | Workspace | Run | Tools |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
 
@@ -466,6 +492,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                     _md_cell(result.category),
                     status,
                     _md_cell(result.runner_status),
+                    "PASS" if result.patch_success else "FAIL",
                     _md_cell(test_status),
                     _md_cell(verifier_status),
                     _md_cell(result.failure_category),
@@ -493,6 +520,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 f"- Test command: `{result.test_command}`",
                 f"- Verifier: `{result.verifier_command or '-'}`",
                 f"- Reason: {result.reason}",
+                f"- Agent success: `{result.agent_success}`",
+                f"- Patch success: `{result.patch_success}`",
                 f"- Failure category: `{result.failure_category}`",
                 f"- Replay metrics: {_inline(_format_metrics(result.metrics))}",
                 f"- Trace: `{result.trace_path}`",
@@ -521,8 +550,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Task success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -551,6 +580,10 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         "0",
                         "0",
                         "0",
+                        "0",
+                        "0",
+                        "0/0",
+                        "0",
                         _md_cell(
                             f"profile_error=1 skipped={planned_total} ({profile_result.error})"
                         ),
@@ -561,12 +594,16 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
             continue
         total = len(results)
         passed = sum(1 for result in results if result.passed)
-        task_successes = sum(
-            1 for result in results if result.runner_status == "success"
+        agent_successes = sum(1 for result in results if result.agent_success)
+        patch_successes = sum(1 for result in results if result.patch_success)
+        patch_success_agent_failures = sum(
+            1 for result in results if result.patch_success and not result.agent_success
         )
         test_passes = sum(1 for result in results if result.test_passed)
         verifier_passes = sum(1 for result in results if result.verifier_passed)
         failure_breakdown = Counter(result.failure_category for result in results)
+        finish_grace_attempts = _sum_metric(results, "finish_grace_attempt_count")
+        finish_grace_successes = _sum_metric(results, "finish_grace_success_count")
         lines.append(
             "| "
             + " | ".join(
@@ -575,9 +612,11 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     _md_cell(profile_result.provider),
                     str(total),
                     _format_rate(passed, total),
-                    _format_rate(task_successes, total),
+                    _format_rate(agent_successes, total),
+                    _format_rate(patch_successes, total),
                     _format_rate(test_passes, total),
                     _format_rate(verifier_passes, total),
+                    str(patch_success_agent_failures),
                     _format_number(_average_metric(results, "average_tool_calls")),
                     str(_sum_metric(results, "repeated_read_count")),
                     str(_sum_metric(results, "invalid_tool_call_count")),
@@ -588,6 +627,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "memory_updated_count")),
                     str(_sum_metric(results, "repo_map_used_count")),
                     str(_sum_metric(results, "repo_map_injected_count")),
+                    f"{finish_grace_successes}/{finish_grace_attempts}",
                     str(_sum_metric(results, "compression_count")),
                     _md_cell(_format_breakdown(failure_breakdown)),
                 ]
@@ -600,14 +640,20 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
             "",
             "## Category Summary",
             "",
-            "| Profile | Category | Cases | Passed | Test pass | Verifier pass | Avg tools | Policy denials | RepoMap used | Failure breakdown |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Profile | Category | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Policy denials | RepoMap used | Failure breakdown |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for profile_result in matrix:
         for category, category_results in _category_summary(profile_result.results).items():
             category_total = len(category_results)
             category_passed = sum(1 for result in category_results if result.passed)
+            category_agent_success = sum(
+                1 for result in category_results if result.agent_success
+            )
+            category_patch_success = sum(
+                1 for result in category_results if result.patch_success
+            )
             category_test_passed = sum(
                 1 for result in category_results if result.test_passed
             )
@@ -625,6 +671,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         _md_cell(category),
                         str(category_total),
                         _format_rate(category_passed, category_total),
+                        _format_rate(category_agent_success, category_total),
+                        _format_rate(category_patch_success, category_total),
                         _format_rate(category_test_passed, category_total),
                         _format_rate(category_verifier_passed, category_total),
                         _format_number(
@@ -675,8 +723,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 "",
                 f"### {profile_result.profile_name}",
                 "",
-                "| Case | Category | Result | Agent | Test | Verifier | Failure | Trace | Tools |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| Case | Category | Result | Agent | Patch | Test | Verifier | Failure | Trace | Tools |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for result in profile_result.results:
@@ -695,6 +743,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         _md_cell(result.category),
                         status,
                         _md_cell(result.runner_status),
+                        "PASS" if result.patch_success else "FAIL",
                         _md_cell(test_status),
                         _md_cell(verifier_status),
                         _md_cell(result.failure_category),

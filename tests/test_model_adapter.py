@@ -196,6 +196,14 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         for tool_name in MODEL_TOOL_NAMES:
             self.assertIn(tool_name, MODEL_SYSTEM_PROMPT)
 
+    def test_system_prompt_tells_models_when_to_finish(self) -> None:
+        prompt = " ".join(MODEL_SYSTEM_PROMPT.split())
+        self.assertIn("If the relevant tests pass", prompt)
+        self.assertIn("emit finish immediately", prompt)
+        self.assertIn("targeted verification passes", prompt)
+        self.assertIn("Full-suite failures may be unrelated", prompt)
+        self.assertIn("remaining budget is low", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -259,6 +259,16 @@ Allowed finish action:
 
 Use only tools listed in the current task's available_tools.
 
+Finish discipline:
+- If the relevant tests pass and no further edit is needed, emit finish
+  immediately.
+- Do not run extra exploratory tools after a targeted verification passes unless
+  the latest result shows a real unresolved failure.
+- Full-suite failures may be unrelated in benchmark fixtures; after the targeted
+  case test passes, summarize unrelated failures in finish instead of looping.
+- When remaining budget is low, prefer finish over redundant reads or repeated
+  test commands.
+
 Tool schemas:
 - read_file(path: string, offset: int = 0, limit: int = 200)
 - search_code(query: string, path: string = ".")

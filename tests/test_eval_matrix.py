@@ -6,8 +6,11 @@ from pathlib import Path
 
 from harnesscoder.cli import main
 from harnesscoder.eval_runner import (
+    EvalMatrixProfileResult,
     EvalCase,
+    EvalResult,
     _run_command_for_eval,
+    render_markdown_report,
     render_markdown_matrix,
     run_eval_cases,
     run_eval_matrix,
@@ -81,6 +84,56 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("scripted_a", report)
         self.assertIn("scripted_b", report)
         self.assertIn("bugfix-add-one", report)
+
+    def test_eval_report_splits_patch_and_agent_success(self) -> None:
+        results = [
+            _result(
+                "both-ok",
+                passed=True,
+                agent_success=True,
+                patch_success=True,
+                runner_status="success",
+                test_passed=True,
+                verifier_passed=True,
+            ),
+            _result(
+                "patch-only",
+                passed=False,
+                agent_success=False,
+                patch_success=True,
+                runner_status="max_iterations",
+                test_passed=True,
+                verifier_passed=True,
+            ),
+            _result(
+                "agent-only",
+                passed=False,
+                agent_success=True,
+                patch_success=False,
+                runner_status="success",
+                test_passed=False,
+                verifier_passed=True,
+            ),
+        ]
+
+        report = render_markdown_report(results)
+        matrix_report = render_markdown_matrix(
+            [
+                EvalMatrixProfileResult(
+                    profile_name="demo",
+                    provider="scripted",
+                    results=results,
+                )
+            ]
+        )
+
+        self.assertIn("| Agent success rate | 66.7% (2/3) |", report)
+        self.assertIn("| Patch success rate | 66.7% (2/3) |", report)
+        self.assertIn("| Patch success but agent failed | 1 |", report)
+        self.assertIn("| Case | Category | Result | Agent | Patch |", report)
+        self.assertIn("Patch success", matrix_report)
+        self.assertIn("Patch ok / agent failed", matrix_report)
+        self.assertIn("| demo | scripted | 3 | 33.3% (1/3) | 66.7% (2/3) | 66.7% (2/3) |", matrix_report)
 
     def test_eval_matrix_records_profile_initialization_error(self) -> None:
         matrix = run_eval_matrix(
@@ -195,6 +248,42 @@ class EvalMatrixTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 1)
+
+def _result(
+    case_id: str,
+    *,
+    passed: bool,
+    agent_success: bool,
+    patch_success: bool,
+    runner_status: str,
+    test_passed: bool,
+    verifier_passed: bool,
+) -> EvalResult:
+    return EvalResult(
+        case_id=case_id,
+        category="demo",
+        task=f"Task {case_id}",
+        cwd=ROOT,
+        workspace_path=ROOT,
+        passed=passed,
+        reason="demo",
+        run_id=f"run_{case_id}",
+        runner_status=runner_status,
+        final_answer="done" if agent_success else "",
+        trace_path=ROOT / "trace.jsonl",
+        test_returncode=0 if test_passed else 1,
+        verifier_returncode=0 if verifier_passed else 1,
+        test_passed=test_passed,
+        verifier_passed=verifier_passed,
+        patch_success=patch_success,
+        agent_success=agent_success,
+        failure_category="success" if passed else "demo_failed",
+        metrics={
+            "average_tool_calls": 1.0,
+            "finish_grace_attempt_count": 0,
+            "finish_grace_success_count": 0,
+        },
+    )
 
 
 if __name__ == "__main__":

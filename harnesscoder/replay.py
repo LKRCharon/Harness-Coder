@@ -232,6 +232,8 @@ def _metrics_summary(
         "checkpoint_created_count": _event_count(records, "checkpoint_created"),
         "run_resumed_count": _event_count(records, "run_resumed")
         + _event_count(records, "resume_started"),
+        "finish_grace_attempt_count": _event_count(records, "finish_grace_started"),
+        "finish_grace_success_count": _finish_grace_success_count(records),
         "test_result_count": _event_count(records, "test_result"),
         "verifier_result_count": _event_count(records, "verifier_result"),
         "resume_success_rate": _resume_success_rate(records, status),
@@ -249,6 +251,15 @@ def _metrics_summary(
 
 def _event_count(records: list[JsonRecord], event_type: str) -> int:
     return sum(1 for record in records if record.get("type") == event_type)
+
+
+def _finish_grace_success_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "finish_grace_result"
+        and record.get("accepted") is True
+    )
 
 
 def _context_injected_count(records: list[JsonRecord]) -> int:
@@ -576,12 +587,12 @@ def _failure_category(
         return "success"
     if metrics.get("test_passed") is False:
         return "test_failed"
+    if status == "max_iterations":
+        return "max_iterations"
     if _as_int(metrics.get("policy_denial_count")) > 0:
         return "policy_denied"
     if _as_int(metrics.get("failed_tool_count")) > 0:
         return "tool_failed"
-    if status == "max_iterations":
-        return "max_iterations"
     if state.get("done") is True:
         return "success"
     return "incomplete"

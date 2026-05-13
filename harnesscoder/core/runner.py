@@ -254,6 +254,72 @@ class AgentRunner:
             self._emit_state_updated(trace, state)
 
         status = "max_iterations"
+        if self._eligible_for_finish_grace(state):
+            trace.emit(
+                "finish_grace_started",
+                reason="max_iterations_after_successful_verification",
+                iterations=state.iterations,
+                max_iterations=state.max_iterations,
+            )
+            try:
+                context_pack = build_context_pack(state)
+                context = assemble_context(
+                    state=state,
+                    system_instructions=MODEL_SYSTEM_PROMPT,
+                    available_tools=[],
+                    context_pack=context_pack,
+                    context_mode=self.context_mode,
+                    repo_map=None,
+                )
+                trace.emit(
+                    "context_packed",
+                    reason="finish_grace",
+                    source_event_index=state.iterations,
+                    input_message_count=len(state.messages),
+                    kept_message_count=min(len(state.messages), 6),
+                    dropped_message_count=max(0, len(state.messages) - 6),
+                    summary=context_pack["cold_trace_summary"],
+                    packed_context=context_pack,
+                    context_pack=context_pack,
+                    finish_grace=True,
+                    **context.to_trace_record(),
+                    **context_pack,
+                )
+                action = self._next_model_action(state, context)
+            except Exception as exc:
+                trace.emit(
+                    "finish_grace_result",
+                    accepted=False,
+                    action_kind=None,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+            else:
+                state.append_action(action)
+                trace.emit("model_action", action=action.to_record(), finish_grace=True)
+                if action.kind == "finish":
+                    answer = action.content or ""
+                    state.finish(answer)
+                    self._emit_state_updated(trace, state)
+                    trace.emit(
+                        "finish_grace_result",
+                        accepted=True,
+                        action_kind=action.kind,
+                    )
+                    trace.emit(
+                        "run_finished",
+                        status="success",
+                        final_answer=answer,
+                        finish_grace=True,
+                    )
+                    return RunResult(state.run_id, "success", answer, trace.trace_path)
+                trace.emit(
+                    "finish_grace_result",
+                    accepted=False,
+                    action_kind=action.kind,
+                    tool_name=action.tool_name,
+                    reason="finish_grace_accepts_only_finish",
+                )
         answer = f"Stopped after {state.max_iterations} iterations without a final answer."
         state.last_error = answer
         state.finish(answer, failed=True)
@@ -357,6 +423,23 @@ class AgentRunner:
         if "command not found" in detail or "timed out" in detail:
             return "environment_error"
         return "test_failed"
+
+    def _eligible_for_finish_grace(self, state: AgentState) -> bool:
+        latest_successful_test_index: int | None = None
+        for index, observation in enumerate(state.observations):
+            if observation.tool_name == "run_tests" and observation.ok:
+                latest_successful_test_index = index
+        if latest_successful_test_index is None:
+            return False
+
+        for observation in state.observations[latest_successful_test_index + 1 :]:
+            if observation.tool_name == "run_tests" and not observation.ok:
+                return False
+            if observation.tool_name in {"edit_file", "write_file"} and observation.ok:
+                metadata = observation.metadata
+                if metadata.get("changed") is True or metadata.get("created") is True:
+                    return False
+        return True
 
     def _new_run_id(self) -> str:
         return f"run_{uuid4().hex[:12]}"
