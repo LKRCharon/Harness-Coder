@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import json
 import os
+import signal
 import shlex
 import threading
 import textwrap
@@ -82,63 +83,114 @@ class HarnessCoderTui:
         self._active_run: ActiveRun | None = None
         self._active_lock = threading.Lock()
         self._spinner_index = 0
+        self._interrupt_requested = False
 
     def run(self) -> int:
-        return curses.wrapper(self._main)
+        previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self._handle_sigint)
+        try:
+            while True:
+                try:
+                    return curses.wrapper(self._main)
+                except KeyboardInterrupt:
+                    if self._request_exit():
+                        return 0
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint_handler)
+
+    def _handle_sigint(self, _signum: int, _frame: object | None) -> None:
+        self._interrupt_requested = True
 
     def _main(self, screen: curses.window) -> int:
         try:
             curses.curs_set(1)
         except curses.error:
             pass
+        self._configure_control_key_input()
         screen.keypad(True)
         screen.timeout(100)
         self._init_colors()
 
         if self.initial_message:
-            self._start_user_message(self.initial_message)
+            initial_message = self.initial_message
+            self.initial_message = None
+            self._start_user_message(initial_message)
 
-        while True:
-            self._poll_active_run()
-            self._draw(screen)
-            try:
-                key = screen.get_wch()
-            except KeyboardInterrupt:
-                if self._request_exit():
+        try:
+            while True:
+                if self._handle_pending_interrupt():
                     return 0
-                continue
-            except curses.error:
-                continue
 
-            if key == curses.KEY_RESIZE:
-                continue
-
-            if key in ("\n", "\r") or key == curses.KEY_ENTER:
-                line = self.input_buffer.strip()
-                self.input_buffer = ""
-                if not line:
-                    continue
-                if line in {"/quit", "/exit"}:
+                try:
+                    self._poll_active_run()
+                    self._draw(screen)
+                    if self._handle_pending_interrupt():
+                        return 0
+                    key = screen.get_wch()
+                except KeyboardInterrupt:
                     if self._request_exit():
                         return 0
                     continue
-                if line.startswith("/"):
-                    self._handle_slash_command(line, screen)
-                else:
-                    self._start_user_message(line)
-                continue
+                except curses.error:
+                    continue
 
-            if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-                self.input_buffer = self.input_buffer[:-1]
-                continue
+                if key == curses.KEY_RESIZE:
+                    continue
 
-            if key == "\x03" or key == "\x04":
-                if self._request_exit():
-                    return 0
-                continue
+                if key in ("\n", "\r") or key == curses.KEY_ENTER:
+                    line = self.input_buffer.strip()
+                    self.input_buffer = ""
+                    if not line:
+                        continue
+                    if line in {"/quit", "/exit"}:
+                        if self._request_exit():
+                            return 0
+                        continue
+                    if line.startswith("/"):
+                        self._handle_slash_command(line, screen)
+                    else:
+                        self._start_user_message(line)
+                    continue
 
-            if isinstance(key, str) and key.isprintable():
-                self.input_buffer += key
+                if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+                    self.input_buffer = self.input_buffer[:-1]
+                    continue
+
+                if key == "\x03" or key == "\x04":
+                    if self._request_exit():
+                        return 0
+                    continue
+
+                if isinstance(key, str) and key.isprintable():
+                    self.input_buffer += key
+        finally:
+            self._restore_control_key_input()
+
+    def _configure_control_key_input(self) -> None:
+        try:
+            curses.noqiflush()
+        except curses.error:
+            pass
+        try:
+            curses.raw()
+        except curses.error:
+            pass
+
+    def _restore_control_key_input(self) -> None:
+        try:
+            curses.noraw()
+        except curses.error:
+            pass
+        try:
+            curses.qiflush()
+        except curses.error:
+            pass
+
+    def _handle_pending_interrupt(self) -> bool:
+        if not self._interrupt_requested:
+            return False
+        self._interrupt_requested = False
+        return self._request_exit()
 
     def _init_colors(self) -> None:
         if not curses.has_colors():

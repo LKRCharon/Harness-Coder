@@ -39,6 +39,32 @@ class TuiRenderLogicTests(unittest.TestCase):
             self.assertEqual(tui.status, "exit blocked: active run")
             self.assertIn("Agent is still running", tui.messages[-1].text)
 
+    def test_pending_interrupt_blocks_when_agent_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            tui._active_run = ActiveRun(
+                prompt="task",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+            tui._interrupt_requested = True
+
+            self.assertFalse(tui._handle_pending_interrupt())
+            self.assertFalse(tui._interrupt_requested)
+            self.assertEqual(tui.status, "exit blocked: active run")
+
+    def test_pending_interrupt_exits_when_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            tui._interrupt_requested = True
+
+            self.assertTrue(tui._handle_pending_interrupt())
+            self.assertFalse(tui._interrupt_requested)
+
     def test_active_run_blocks_mutating_slash_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
