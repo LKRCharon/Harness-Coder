@@ -61,6 +61,9 @@ class ActiveRun:
     trace_path: Path | None = None
 
 
+CARD_MIN_WIDTH = 24
+
+
 class HarnessCoderTui:
     def __init__(self, config: TuiConfig, initial_message: str | None = None) -> None:
         self.config = config
@@ -145,6 +148,8 @@ class HarnessCoderTui:
         pairs = {
             "title": (curses.COLOR_CYAN, -1),
             "muted": (curses.COLOR_BLUE, -1),
+            "border": (curses.COLOR_BLUE, -1),
+            "status": (curses.COLOR_MAGENTA, -1),
             "user": (curses.COLOR_GREEN, -1),
             "assistant": (curses.COLOR_WHITE, -1),
             "tool": (curses.COLOR_YELLOW, -1),
@@ -157,14 +162,14 @@ class HarnessCoderTui:
     def _draw(self, screen: curses.window) -> None:
         screen.erase()
         height, width = screen.getmaxyx()
-        width = max(width, 20)
-        if height < 6:
+        width = max(width, 8)
+        if height < 8:
             self._draw_compact(screen, height, width)
             screen.refresh()
             return
 
         header_height = self._draw_header(screen, height, width)
-        footer_height = 3
+        footer_height = 4
         body_start = header_height
         body_end = max(body_start, height - footer_height)
         body_height = max(1, body_end - body_start)
@@ -176,62 +181,87 @@ class HarnessCoderTui:
                 break
             self._safe_addstr(screen, row, 1, line[: width - 2], color_name)
 
-        divider = "-" * (width - 1)
-        self._safe_addstr(screen, height - 3, 0, divider, "muted")
-        self._safe_addstr(screen, height - 2, 0, self._footer_status()[: width - 1], "muted")
-        prompt = "> " + self.input_buffer
-        if self._active_run:
-            prompt = "(running) " + prompt
-        self._safe_addstr(screen, height - 1, 0, prompt[: width - 1], "user")
+        self._draw_footer(screen, height, width)
         screen.refresh()
 
     def _draw_compact(self, screen: curses.window, height: int, width: int) -> None:
+        badge, color = self._status_badge()
         lines = [
-            ("HC " + self._footer_status(), "title"),
+            (self._clip(f"HC [{badge}] {self._footer_status()}", width - 1), color),
             ("> " + self.input_buffer, "user"),
         ]
         for row, (line, color_name) in enumerate(lines[:height]):
             self._safe_addstr(screen, row, 0, line[: width - 1], color_name)
 
     def _draw_header(self, screen: curses.window, height: int, width: int) -> int:
-        title = " HarnessCoder TUI "
-        top = "+" + title.center(max(0, width - 2), "-") + "+"
-        self._safe_addstr(screen, 0, 0, top[:width], "title")
-
+        card_width = self._panel_width(width)
+        inner_width = max(8, card_width - 4)
+        badge, badge_color = self._status_badge()
         model = self.config.openai_model or "-"
-        cwd = str(self.config.cwd)
-        meta = (
-            f" provider={self.config.provider} model={model} "
-            f"iters={self.config.max_iterations}"
-        )
-        if height <= 9:
-            compact = f"{meta.strip()} cwd={cwd}"
-            self._safe_addstr(screen, 1, 1, compact[: max(1, width - 2)], "muted")
-            return 2
+        cwd = self._compact_path(self.config.cwd, max(12, inner_width - 4))
 
-        self._safe_addstr(screen, 1, 1, meta[: max(1, width - 2)], "muted")
-        self._safe_addstr(screen, 2, 1, f" cwd={cwd}"[: max(1, width - 2)], "muted")
+        header_lines = [
+            (
+                self._key_value_line(
+                    [
+                        ("state", badge),
+                        ("provider", self.config.provider),
+                        ("model", model),
+                    ],
+                    inner_width,
+                ),
+                badge_color,
+            ),
+            (
+                self._key_value_line(
+                    [
+                        ("context", self.config.context_mode),
+                        ("repo-map", self.config.repo_map_mode),
+                        ("iters", str(self.config.max_iterations)),
+                    ],
+                    inner_width,
+                ),
+                "muted",
+            ),
+        ]
 
-        if width >= 64:
-            diagram = "[message] -> [model] -> [policy] -> [tools] -> [trace]"
-        else:
-            diagram = "msg -> model -> policy -> tools -> trace"
-        self._safe_addstr(screen, 3, 1, diagram[: max(1, width - 2)], "title")
-        if self._active_run:
-            live = self._active_run_line()
-            self._safe_addstr(screen, 4, 1, live[: max(1, width - 2)], "tool")
-            return 5
-        return 4
+        if height > 10:
+            header_lines.append((f"cwd {cwd}", "muted"))
+            pipeline = (
+                "message -> model -> policy -> tools -> trace"
+                if width >= 68
+                else "msg -> model -> tools -> trace"
+            )
+            header_lines.append((pipeline, "title"))
+        elif height > 8:
+            header_lines.append((f"cwd {cwd}", "muted"))
+
+        if self._active_run and height > 11:
+            header_lines.append((self._active_run_line(), "tool"))
+
+        self._safe_addstr(screen, 0, 0, self._card_title("HarnessCoder", card_width), "title")
+        for index, (line, color_name) in enumerate(header_lines, start=1):
+            self._safe_addstr(
+                screen,
+                index,
+                0,
+                self._card_body(line, card_width),
+                color_name,
+            )
+        bottom_row = len(header_lines) + 1
+        self._safe_addstr(screen, bottom_row, 0, self._card_edge(card_width), "border")
+        return bottom_row + 1
 
     def _render_messages(self, width: int) -> list[tuple[str, str]]:
+        card_width = self._panel_width(width)
         rendered: list[tuple[str, str]] = []
         for message in self.messages:
-            prefix = {
-                "system": "[sys] ",
-                "user": "[you] ",
-                "assistant": "[agent] ",
-                "tool": "[tool] ",
-                "error": "[err] ",
+            title = {
+                "system": "SYSTEM",
+                "user": "YOU",
+                "assistant": "AGENT",
+                "tool": "TOOL",
+                "error": "ERROR",
             }[message.role]
             color = {
                 "system": "muted",
@@ -240,24 +270,86 @@ class HarnessCoderTui:
                 "tool": "tool",
                 "error": "error",
             }[message.role]
-            first_prefix = prefix
-            next_prefix = " " * len(prefix)
+            rendered.append((self._card_title(title, card_width), "border"))
             for raw_line in message.text.splitlines() or [""]:
                 wrapped = textwrap.wrap(
                     raw_line,
-                    width=max(10, width - len(prefix)),
+                    width=max(8, card_width - 4),
                     replace_whitespace=False,
                     drop_whitespace=False,
                 ) or [""]
-                for index, line in enumerate(wrapped):
-                    rendered.append(
-                        (
-                            (first_prefix if index == 0 else next_prefix) + line,
-                            color,
-                        )
-                    )
-                first_prefix = next_prefix
+                for line in wrapped:
+                    rendered.append((self._card_body(line, card_width), color))
+            rendered.append((self._card_edge(card_width), "border"))
         return rendered
+
+    def _draw_footer(self, screen: curses.window, height: int, width: int) -> None:
+        card_width = self._panel_width(width)
+        badge, badge_color = self._status_badge()
+        status = self._clip(
+            f"[{badge}] {self._footer_status()}",
+            max(1, card_width - 1),
+        )
+        self._safe_addstr(screen, height - 4, 0, status, badge_color)
+
+        title = "Prompt"
+        if self._active_run:
+            title = "Prompt locked"
+        self._safe_addstr(screen, height - 3, 0, self._card_title(title, card_width), "title")
+        prompt = "> " + self.input_buffer
+        if self._active_run:
+            prompt = "(running) " + prompt
+        self._safe_addstr(screen, height - 2, 0, self._card_body(prompt, card_width), "user")
+        self._safe_addstr(screen, height - 1, 0, self._card_edge(card_width), "border")
+
+    def _status_badge(self) -> tuple[str, str]:
+        if self._active_run:
+            return ("RUNNING", "tool")
+        status = self.status.lower()
+        if any(marker in status for marker in ("failed", "error", "blocked", "denied")):
+            return ("ATTENTION", "error")
+        if "success" in status:
+            return ("SUCCESS", "user")
+        return ("READY", "status")
+
+    def _card_title(self, title: str, width: int) -> str:
+        width = self._panel_width(width)
+        label = f"-- {self._clip(title, max(1, width - 7))} "
+        return "+" + label[: width - 2].ljust(width - 2, "-") + "+"
+
+    def _card_edge(self, width: int) -> str:
+        width = self._panel_width(width)
+        return "+" + ("-" * (width - 2)) + "+"
+
+    def _card_body(self, text: str, width: int) -> str:
+        width = self._panel_width(width)
+        inner_width = max(1, width - 4)
+        return f"| {self._clip(text, inner_width).ljust(inner_width)} |"
+
+    def _panel_width(self, width: int) -> int:
+        return max(4, width)
+
+    def _clip(self, text: str, width: int) -> str:
+        if width <= 0:
+            return ""
+        if len(text) <= width:
+            return text
+        if width <= 1:
+            return text[:width]
+        return text[: width - 1] + "..."
+
+    def _compact_path(self, path: Path, width: int) -> str:
+        text = str(path)
+        if len(text) <= width:
+            return text
+        name = path.name or text
+        parent = path.parent.name
+        compact = f".../{parent}/{name}" if parent else f".../{name}"
+        return self._clip(compact, width)
+
+    def _key_value_line(self, pairs: list[tuple[str, str]], width: int) -> str:
+        text = "  ".join(f"{key} [{value}]" for key, value in pairs)
+        return self._clip(text, width)
 
     def _safe_addstr(
         self,

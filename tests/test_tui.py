@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from harnesscoder.core.runner import RunResult
-from harnesscoder.tui import ActiveRun, HarnessCoderTui, TuiConfig
+from harnesscoder.tui import ActiveRun, HarnessCoderTui, Message, TuiConfig
 
 
 def make_config(cwd: Path) -> TuiConfig:
@@ -75,7 +75,7 @@ class TuiRenderLogicTests(unittest.TestCase):
             self.assertTrue(any(message.text.startswith("cwd:") for message in tui.messages))
             self.assertNotIn("blocked", tui.status)
 
-    def test_draw_places_status_above_prompt(self) -> None:
+    def test_draw_places_status_card_above_prompt_card(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
             tui = HarnessCoderTui(make_config(cwd))
@@ -86,8 +86,21 @@ class TuiRenderLogicTests(unittest.TestCase):
 
             tui._draw(screen)
 
-            self.assertEqual(screen.text_at(8, 0), "ready")
-            self.assertEqual(screen.text_at(9, 0), "> hello")
+            self.assertEqual(screen.text_at(6, 0), "[READY] ready")
+            self.assertEqual(screen.text_at(7, 0), "+-- Prompt ----------------------------+")
+            self.assertEqual(screen.text_at(8, 0), "| > hello                              |")
+
+    def test_render_messages_uses_role_cards(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            tui.messages = [Message("user", "please inspect the repo")]
+
+            rendered = tui._render_messages(40)
+
+        self.assertEqual(rendered[0], ("+-- YOU -------------------------------+", "border"))
+        self.assertEqual(rendered[1], ("| please inspect the repo              |", "user"))
+        self.assertEqual(rendered[2], ("+--------------------------------------+", "border"))
 
     def test_latest_trace_event_label_describes_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
