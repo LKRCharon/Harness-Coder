@@ -37,12 +37,13 @@ class HCBench20Tests(unittest.TestCase):
         self.assertTrue(all(case.allowed_tools for case in cases))
         self.assertTrue(all(case.step_budget for case in cases))
         self.assertTrue(all(case.verifier for case in cases))
+        self.assertTrue(all(case.split == "heldout" for case in cases))
 
     def test_oracle_plan_covers_every_case(self) -> None:
         cases = load_eval_cases(ROOT / "eval" / "hc_bench_20.json")
         plan = _load_plan()
 
-        self.assertEqual(set(plan), {case.id for case in cases})
+        self.assertTrue({case.id for case in cases}.issubset(plan))
         self.assertTrue(all(plan[case.id] for case in cases))
 
     def test_reports_include_category_summary(self) -> None:

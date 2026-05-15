@@ -135,7 +135,8 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("| Stored artifacts | 3 |", report)
         self.assertIn("| Largest tool output chars | 1000 |", report)
         self.assertIn("| Observation compression ratio | 40.0% |", report)
-        self.assertIn("| Case | Category | Result | Agent | Patch |", report)
+        self.assertIn("| Case | Category | Split | Result | Agent | Patch |", report)
+        self.assertIn("| Split breakdown | unspecified=3 |", report)
         self.assertIn("Patch success", matrix_report)
         self.assertIn("Patch ok / agent failed", matrix_report)
         self.assertIn("Artifacts", matrix_report)
@@ -280,6 +281,8 @@ def _result(
     return EvalResult(
         case_id=case_id,
         category="demo",
+        split="unspecified",
+        source="unit-test",
         task=f"Task {case_id}",
         cwd=ROOT,
         workspace_path=ROOT,

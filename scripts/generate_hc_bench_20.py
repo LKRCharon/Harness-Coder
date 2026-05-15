@@ -66,6 +66,8 @@ def build_cases_and_plans() -> tuple[list[dict[str, object]], dict[str, list[dic
                 "timeout": 10,
                 "success_returncode": 0,
                 "verifier": verifier,
+                "split": "heldout",
+                "source": "synthetic-microbenchmark",
             }
         )
         plans[case_id] = plan

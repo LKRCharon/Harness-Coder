@@ -47,6 +47,8 @@ class EvalCase:
     verifier: str | None = None
     success_contains: str | tuple[str, ...] | None = None
     success_returncode: int | None = None
+    split: str = "unspecified"
+    source: str = "unspecified"
 
     @classmethod
     def from_record(cls, record: dict[str, Any]) -> "EvalCase":
@@ -63,6 +65,8 @@ class EvalCase:
         verifier = _optional_str(record, "verifier", None)
         success_contains = _success_contains(record.get("success_contains"))
         success_returncode = _optional_int(record, "success_returncode", None)
+        split = _optional_str(record, "split", "unspecified")
+        source = _optional_str(record, "source", "unspecified")
 
         if success_contains is None and success_returncode is None:
             raise ValueError(
@@ -83,6 +87,8 @@ class EvalCase:
             verifier=verifier,
             success_contains=success_contains,
             success_returncode=success_returncode,
+            split=split or "unspecified",
+            source=source or "unspecified",
         )
 
 
@@ -90,6 +96,8 @@ class EvalCase:
 class EvalResult:
     case_id: str
     category: str
+    split: str
+    source: str
     task: str
     cwd: Path
     workspace_path: Path
@@ -258,6 +266,8 @@ def run_eval_cases(
             EvalResult(
                 case_id=case.id,
                 category=case.category,
+                split=case.split,
+                source=case.source,
                 task=case.task,
                 cwd=case_cwd,
                 workspace_path=workspace.path,
@@ -359,6 +369,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     patch_success_agent_failures = sum(
         1 for result in results if result.patch_success and not result.agent_success
     )
+    split_breakdown = Counter(result.split for result in results)
+    source_breakdown = Counter(result.source for result in results)
     avg_tool_calls = _average_metric(results, "average_tool_calls")
     repeated_reads = _sum_metric(results, "repeated_read_count")
     invalid_tool_calls = _sum_metric(results, "invalid_tool_call_count")
@@ -447,6 +459,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Finish grace attempts | {finish_grace_attempts} |",
         f"| Finish grace successes | {finish_grace_successes} |",
         f"| Resume success rate | {_format_nullable_rate(resume_rate)} |",
+        f"| Split breakdown | {_format_breakdown(split_breakdown)} |",
+        f"| Source breakdown | {_format_breakdown(source_breakdown)} |",
         f"| Failure category breakdown | {_format_breakdown(failure_breakdown)} |",
         "",
         "## Category Summary",
@@ -492,8 +506,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
             "",
             "## Runs",
             "",
-            "| Case | Category | Result | Agent | Patch | Test | Verifier | Failure | Workspace | Run | Tools |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Case | Category | Split | Result | Agent | Patch | Test | Verifier | Failure | Workspace | Run | Tools |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
 
@@ -511,6 +525,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 [
                     _md_cell(result.case_id),
                     _md_cell(result.category),
+                    _md_cell(result.split),
                     status,
                     _md_cell(result.runner_status),
                     "PASS" if result.patch_success else "FAIL",
@@ -536,6 +551,8 @@ def render_markdown_report(results: list[EvalResult]) -> str:
                 "",
                 f"- Task: {_inline(result.task)}",
                 f"- Category: `{result.category}`",
+                f"- Split: `{result.split}`",
+                f"- Source: `{result.source}`",
                 f"- CWD: `{result.cwd}`",
                 f"- Workspace: `{result.workspace_path}`",
                 f"- Test command: `{result.test_command}`",
@@ -756,8 +773,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 "",
                 f"### {profile_result.profile_name}",
                 "",
-                "| Case | Category | Result | Agent | Patch | Test | Verifier | Failure | Trace | Tools |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| Case | Category | Split | Result | Agent | Patch | Test | Verifier | Failure | Trace | Tools |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for result in profile_result.results:
@@ -774,6 +791,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     [
                         _md_cell(result.case_id),
                         _md_cell(result.category),
+                        _md_cell(result.split),
                         status,
                         _md_cell(result.runner_status),
                         "PASS" if result.patch_success else "FAIL",

@@ -28,11 +28,13 @@ policy-gated loop.
 
 ## Current Status
 
-Version `1.0.2` is a runnable local runtime with real bugfix and minimal
+Version `1.2.0` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
-large-output artifact store for audit/replay. It includes:
+large-output artifact store for audit/replay. It also separates training trace
+collection from live evaluation through HC-Train-40 and HC-Bench-20. It
+includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -64,6 +66,9 @@ large-output artifact store for audit/replay. It includes:
   providers.
 - HC-Bench-20: 20 fixture-backed cases across bugfix, recovery, greenfield,
   context-governance, and policy/safety categories.
+- HC-Train-40: 40 fixture-backed training cases for teacher/current-policy trace
+  collection, with explicit `split=train` and `source=synthetic-microbenchmark`
+  metadata.
 - A deterministic `hc-bench-oracle` provider that proves the benchmark and
   report pipeline are solvable before comparing real models.
 - CLI entrypoints:
@@ -227,8 +232,9 @@ and [docs/spec-1.0.0.md](docs/spec-1.0.0.md). The 1.0.1 evaluation tightening
 is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md), the 1.0.2 observation
 artifact store is scoped in [docs/spec-1.0.2.md](docs/spec-1.0.2.md), and the
 1.1.0 prompt cache governance work is scoped in
-[docs/spec-1.1.0.md](docs/spec-1.1.0.md). The Claude Code prompt caching note
-that motivated 1.1 is summarized in
+[docs/spec-1.1.0.md](docs/spec-1.1.0.md). The 1.2.0 train/heldout benchmark
+split is scoped in [docs/spec-1.2.0.md](docs/spec-1.2.0.md). The Claude Code
+prompt caching note that motivated 1.1 is summarized in
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md).
 
 ## Replay And Eval
@@ -390,6 +396,30 @@ The oracle is not a claim about model intelligence. It is a stable baseline for
 the harness itself: fixture isolation, policy gates, trace metrics, verifiers,
 and category-level reports. Real providers can be compared against the same
 suite through `--model-profiles`.
+
+Generate and sanity-check HC-Train-40:
+
+```bash
+python scripts/generate_hc_train_40.py
+
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_train_40.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-train-40-oracle.md
+```
+
+HC-Train-40 is a training trace pool, not the final scorecard. It contains 40
+synthetic microbenchmark cases:
+
+- 7 bugfix cases.
+- 14 context cases that require search-first, bounded-read behavior.
+- 8 recovery cases that require observing a failing test and patching again.
+- 6 policy cases that exercise tool denials and safe recovery paths.
+- 5 greenfield cases that create source plus tests through `write_file`.
+
+Use HC-Train-40 to collect teacher/current-policy traces for post-training. Use
+HC-Bench-20, and later a separate HC-Heldout suite, for live model comparison.
 
 Near-term TODOs:
 

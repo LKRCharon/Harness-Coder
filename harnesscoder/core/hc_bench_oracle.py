@@ -9,7 +9,11 @@ from typing import Any
 from harnesscoder.core.state import AgentState, ModelAction
 
 
-PLAN_PATH = Path(__file__).resolve().parents[1] / "data" / "hc_bench_oracle.json"
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+PLAN_PATHS = (
+    DATA_DIR / "hc_bench_oracle.json",
+    DATA_DIR / "hc_train_oracle.json",
+)
 
 
 def hc_bench_oracle_action(state: AgentState) -> ModelAction | None:
@@ -41,9 +45,16 @@ def hc_bench_oracle_action(state: AgentState) -> ModelAction | None:
 
 @lru_cache(maxsize=1)
 def _load_plan() -> dict[str, list[dict[str, Any]]]:
-    if not PLAN_PATH.exists():
+    plans: dict[str, list[dict[str, Any]]] = {}
+    for path in PLAN_PATHS:
+        plans.update(_load_plan_file(path))
+    return plans
+
+
+def _load_plan_file(path: Path) -> dict[str, list[dict[str, Any]]]:
+    if not path.exists():
         return {}
-    data = json.loads(PLAN_PATH.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         return {}
     raw_plans = data.get("plans")

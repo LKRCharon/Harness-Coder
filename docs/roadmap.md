@@ -9,10 +9,11 @@ This roadmap is intentionally conservative. The project should not grow into a
 generic multi-agent framework, a LangGraph clone, or a web UI before the single
 agent runtime is demonstrably reliable.
 
-## Current Release: 1.1.x
+## Current Release: 1.2.x
 
-The 1.1 line keeps the 1.0 interview-ready baseline and adds
-prompt-cache-aware context governance:
+The 1.2 line keeps the 1.0 interview-ready runtime, the 1.1 prompt-cache-aware
+context governance, and adds a clean train/eval boundary for post-training
+work:
 
 - Event-sourced agent loop with JSONL traces.
 - Policy-gated local tools.
@@ -26,10 +27,12 @@ prompt-cache-aware context governance:
 - Observation artifact storage for large tool outputs.
 - Prompt fingerprints, stable-prefix token estimates, and cache-break metrics
   for every model-step prompt.
+- HC-Train-40 as a training trace pool with explicit split/source metadata.
+- HC-Bench-20 kept separate as the current heldout-like control suite.
 
-### 1.1.x Quality Work
+### 1.2.x Quality Work
 
-Near-term 1.1.x releases should focus on tightening evidence rather than adding
+Near-term 1.2.x releases should focus on tightening evidence rather than adding
 new product surfaces:
 
 - Keep unit tests and HC-Bench-20 oracle green.
@@ -42,10 +45,12 @@ new product surfaces:
 - Preserve deterministic baselines so model changes can be separated from
   harness regressions.
 - Keep prompt/tool ordering deterministic and report stable-prefix changes.
+- Keep HC-Train-40 and HC-Bench-20 ids disjoint so training trace collection and
+  final eval evidence do not collapse into one dataset.
 
-## 1.2.0: Read-Only Reviewer / Explorer Subagent
+## 1.3.0: Read-Only Reviewer / Explorer Subagent
 
-1.2 may add a small read-only subagent lane. It should be a reviewer/explorer,
+1.3 may add a small read-only subagent lane. It should be a reviewer/explorer,
 not a general multi-agent platform.
 
 Scope:
@@ -72,9 +77,10 @@ Non-goals:
 
 ## Future Directions
 
-These are possible after 1.1, but only if backed by benchmark cases and replay
+These are possible after 1.2, but only if backed by benchmark cases and replay
 evidence:
 
+- HC-Heldout-30 as a never-train final eval set.
 - More realistic repo tasks with targeted verifiers.
 - Stronger context ablations across `none`, `pack`, `memory`, and RepoMap modes.
 - Better replay UX for inspecting model actions, tool results, artifacts, and

@@ -1,0 +1,1494 @@
+{
+  "suite": "HC-Train-40",
+  "version": "1.2.0",
+  "plans": {
+    "train-billing-coupon-normalization": [
+      {
+        "rationale": "Search for def coupon_discount before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def coupon_discount",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return coupons.get(code, 0.0)\n",
+          "new": "    return coupons.get(code.strip().upper(), 0.0)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_coupon_normalization",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-tax-rounding": [
+      {
+        "rationale": "Search for def tax_cents before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def tax_cents",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return int(amount_cents * rate)\n",
+          "new": "    return round(amount_cents * rate)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_tax_rounds_to_nearest_cent",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-seat-capacity": [
+      {
+        "rationale": "Search for def can_add_seat before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def can_add_seat",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return used <= limit\n",
+          "new": "    return used < limit\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_seat_availability_boundary",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-trial-expiry": [
+      {
+        "rationale": "Search for def trial_is_active before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def trial_is_active",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return current_day <= expires_day\n",
+          "new": "    return current_day < expires_day\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_trial_expiry_boundary",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-plan-rank": [
+      {
+        "rationale": "Search for def plan_rank before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def plan_rank",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return ranks[name]\n",
+          "new": "    return ranks.get(name, 0)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_plan_rank_unknown_defaults_to_free",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-refund-window": [
+      {
+        "rationale": "Search for def is_refundable before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def is_refundable",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return days_since_purchase < refund_window_days\n",
+          "new": "    return days_since_purchase <= refund_window_days\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_refund_window_inclusive",
+          "timeout": 10
+        }
+      }
+    ],
+    "train-billing-usage-overage": [
+      {
+        "rationale": "Search for def overage_units before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def overage_units",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return max(0, used_units - included_units + 1)\n",
+          "new": "    return max(0, used_units - included_units)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_business.TrainBusinessTests.test_usage_overage_boundary",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-router-timeout-large-file": [
+      {
+        "rationale": "Search for router_timeout_seconds before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "router_timeout_seconds",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 520,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return timeouts[name]\n",
+          "new": "    return timeouts.get(name, 30)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_router_timeout_lookup",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-router-capability-large-file": [
+      {
+        "rationale": "Search for provider_supports_tool_calls before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "provider_supports_tool_calls",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 585,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return capabilities[name]\n",
+          "new": "    return capabilities.get(name, False)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_provider_supports_tool_calls_unknown",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-router-budget-large-file": [
+      {
+        "rationale": "Search for provider_token_budget before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "provider_token_budget",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 650,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return budgets[name]\n",
+          "new": "    return budgets.get(name, 4096)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_provider_budget_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-router-retry-large-file": [
+      {
+        "rationale": "Search for router_retry_limit before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "router_retry_limit",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 715,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return limits[name]\n",
+          "new": "    return limits.get(name, 2)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_router_retry_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-router-endpoint-large-file": [
+      {
+        "rationale": "Search for provider_endpoint_path before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "provider_endpoint_path",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 780,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return paths[name]\n",
+          "new": "    return paths.get(name, \"/v1\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_provider_endpoint_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-metric-percentile-large-file": [
+      {
+        "rationale": "Search for percentile_default before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "percentile_default",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of metrics.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "offset": 625,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in metrics.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "old": "def percentile_default(name):\n    defaults = {\n        \"latency_ms\": 95,\n        \"tool_calls\": 99,\n    }\n    return defaults[name]\n",
+          "new": "def percentile_default(name):\n    defaults = {\n        \"latency_ms\": 95,\n        \"tool_calls\": 99,\n    }\n    return defaults.get(name, 50)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_percentile_default_lookup",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-metric-window-large-file": [
+      {
+        "rationale": "Search for metric_window_seconds before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "metric_window_seconds",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of metrics.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "offset": 690,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in metrics.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "old": "    return windows[name]\n",
+          "new": "    return windows.get(name, 60)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_metric_window_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-metric-label-large-file": [
+      {
+        "rationale": "Search for metric_label before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "metric_label",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of metrics.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "offset": 755,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in metrics.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "old": "    return labels[name]\n",
+          "new": "    return labels.get(name, name)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_metric_label_fallback",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-access-role-large-file": [
+      {
+        "rationale": "Search for role_can_export before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "role_can_export",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of access_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "offset": 430,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in access_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "old": "    return permissions[role]\n",
+          "new": "    return permissions.get(role, False)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_role_permission_unknown",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-access-scope-large-file": [
+      {
+        "rationale": "Search for expand_scope before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "expand_scope",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of access_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "offset": 495,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in access_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "old": "    return scopes[name]\n",
+          "new": "    return scopes.get(name, [])\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_scope_expansion_unknown",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-access-token-large-file": [
+      {
+        "rationale": "Search for token_ttl_seconds before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "token_ttl_seconds",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of access_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "offset": 560,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in access_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "access_rules.py",
+          "old": "    return ttls[name]\n",
+          "new": "    return ttls.get(name, 300)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_token_ttl_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-audit-event-large-file": [
+      {
+        "rationale": "Search for audit_event_severity before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "audit_event_severity",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of audit_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "offset": 450,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in audit_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "old": "    return severities[name]\n",
+          "new": "    return severities.get(name, \"info\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_audit_severity_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-audit-retention-large-file": [
+      {
+        "rationale": "Search for audit_retention_days before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "audit_retention_days",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of audit_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "offset": 515,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in audit_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "old": "    return retention[name]\n",
+          "new": "    return retention.get(name, 7)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_audit_retention_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-audit-sink-large-file": [
+      {
+        "rationale": "Search for audit_sink_for_region before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "audit_sink_for_region",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of audit_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "offset": 580,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in audit_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "audit_rules.py",
+          "old": "    return sinks[region]\n",
+          "new": "    return sinks.get(region, \"local\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_audit_sink_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-header-normalization": [
+      {
+        "rationale": "Search for def normalize_header before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def normalize_header",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return header.strip()\n",
+          "new": "    return header.strip().lower()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_header_normalization_accepts_spaces_and_case",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return header.strip().lower()\n",
+          "new": "    return header.strip().lower().replace(\" \", \"_\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_header_normalization_accepts_spaces_and_case",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-int-list-parser": [
+      {
+        "rationale": "Search for def parse_int_list before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_int_list",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return [int(item) for item in value.split(\",\")]\n",
+          "new": "    return [int(item) for item in value.split(\",\") if item]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_int_list_skips_empty_items",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return [int(item) for item in value.split(\",\") if item]\n",
+          "new": "    return [int(item.strip()) for item in value.split(\",\") if item.strip()]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_int_list_skips_empty_items",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-duration-parser": [
+      {
+        "rationale": "Search for def parse_duration_seconds before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_duration_seconds",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "def parse_duration_seconds(value):\n    return int(value)\n",
+          "new": "def parse_duration_seconds(value):\n    return int(value.rstrip(\"s\"))\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_duration_units",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "def parse_duration_seconds(value):\n    return int(value.rstrip(\"s\"))\n",
+          "new": "def parse_duration_seconds(value):\n    text = value.strip().lower()\n    if text.endswith(\"ms\"):\n        return int(text[:-2]) // 1000\n    if text.endswith(\"m\"):\n        return int(text[:-1]) * 60\n    if text.endswith(\"s\"):\n        return int(text[:-1])\n    return int(text)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_duration_units",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-env-list-parser": [
+      {
+        "rationale": "Search for def parse_env_list before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_env_list",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return value.split(\";\")\n",
+          "new": "    return [item.strip() for item in value.split(\";\")]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_env_list",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return [item.strip() for item in value.split(\";\")]\n",
+          "new": "    return [item.strip() for item in value.split(\";\") if item.strip()]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_env_list",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-key-value-parser": [
+      {
+        "rationale": "Search for def parse_key_values before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_key_values",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        key, value = item.split(\"=\")\n",
+          "new": "        key, value = item.split(\":\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_key_values_keeps_colons_in_value",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        key, value = item.split(\":\")\n",
+          "new": "        key, value = item.split(\"=\", 1)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_key_values_keeps_colons_in_value",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-header-dedupe": [
+      {
+        "rationale": "Search for def dedupe_headers before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def dedupe_headers",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        if header not in seen:\n",
+          "new": "        if header.strip() not in seen:\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_dedupe_headers_case_insensitive",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        if header.strip() not in seen:\n            seen.add(header)\n            result.append(header)\n",
+          "new": "        key = header.strip().lower()\n        if key not in seen:\n            seen.add(key)\n            result.append(header.strip())\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_dedupe_headers_case_insensitive",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-limit-parser": [
+      {
+        "rationale": "Search for def parse_optional_limit before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_optional_limit",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "def parse_optional_limit(value):\n    return int(value)\n",
+          "new": "def parse_optional_limit(value):\n    return 0 if value == \"\" else int(value)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_optional_limit",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "def parse_optional_limit(value):\n    return 0 if value == \"\" else int(value)\n",
+          "new": "def parse_optional_limit(value):\n    text = value.strip()\n    return None if text == \"\" else int(text)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_optional_limit",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-mode-parser": [
+      {
+        "rationale": "Search for def parse_mode before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_mode",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return value\n",
+          "new": "    return value.strip().lower()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_mode_validates_values",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return value.strip().lower()\n",
+          "new": "    mode = value.strip().lower()\n    if mode not in {\"fast\", \"safe\"}:\n        raise ValueError(\"unsupported mode\")\n    return mode\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_recovery.TrainRecoveryTests.test_parse_mode_validates_values",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-report-extension": [
+      {
+        "rationale": "Search for def export_report before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def export_report",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of file_access.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "file_access.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in file_access.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "file_access.py",
+          "old": "    target.write_text(content, encoding=\"utf-8\")\n",
+          "new": "    if target.suffix not in {\".txt\", \".md\"}:\n        raise ValueError(\"unsupported report extension\")\n    target.write_text(content, encoding=\"utf-8\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_export_report_rejects_bad_extension",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-archive-safe-name": [
+      {
+        "rationale": "Search for def build_archive_command before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def build_archive_command",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of archive.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "archive.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in archive.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "archive.py",
+          "old": "    return f\"tar -czf {archive_name}.tgz {source_dir}\"\n",
+          "new": "    safe_name = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in archive_name)\n    return [\"tar\", \"-czf\", f\"{safe_name}.tgz\", str(source_dir)]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_archive_name_sanitizes_spaces_and_slashes",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-secret-read": [
+      {
+        "rationale": "Read the relevant portion of .env.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": ".env",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of README.md.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "README.md",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_secret_file_not_created",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-env-command": [
+      {
+        "rationale": "Exercise policy denial for environment inspection.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "env",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Recover with a safe read-only inspection command.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "ls",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_secret_file_not_created",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-shell-control": [
+      {
+        "rationale": "Exercise policy denial for shell control tokens.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "ls && pwd",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Recover with a safe read-only inspection command.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "pwd",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_secret_file_not_created",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-run-secret-path": [
+      {
+        "rationale": "Exercise policy denial for a sensitive workspace path.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "ls .env",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Recover with a safe read-only inspection command.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "ls README.md",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_train_policy.TrainPolicyTests.test_secret_file_not_created",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-normalize-tags": [
+      {
+        "rationale": "Create tag_utils.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "tag_utils.py",
+          "content": "def normalize_tags(tags):\n    seen = set()\n    result = []\n    for tag in tags:\n        value = str(tag).strip().lower()\n        if not value or value in seen:\n            continue\n        seen.add(value)\n        result.append(value)\n    return result\n"
+        }
+      },
+      {
+        "rationale": "Create test_tag_utils.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_tag_utils.py",
+          "content": "import unittest\n\nfrom tag_utils import normalize_tags\n\n\nclass TagUtilsTests(unittest.TestCase):\n    def test_normalizes_and_dedupes(self):\n        self.assertEqual(normalize_tags([' AI ', 'ai', '', 'Eval']), ['ai', 'eval'])\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_tag_utils.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-window-counter": [
+      {
+        "rationale": "Create window_counter.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "window_counter.py",
+          "content": "def count_in_window(events, start, end):\n    return sum(1 for event in events if start <= event.get('ts', 0) <= end)\n"
+        }
+      },
+      {
+        "rationale": "Create test_window_counter.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_window_counter.py",
+          "content": "import unittest\n\nfrom window_counter import count_in_window\n\n\nclass WindowCounterTests(unittest.TestCase):\n    def test_counts_inclusive_window(self):\n        events = [{'ts': 10}, {'ts': 15}, {'ts': 20}, {'ts': 21}]\n        self.assertEqual(count_in_window(events, 10, 20), 3)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_window_counter.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-status-rollup": [
+      {
+        "rationale": "Create status_rollup.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "status_rollup.py",
+          "content": "def status_counts(items):\n    counts = {}\n    for item in items:\n        status = item.get('status', 'unknown')\n        counts[status] = counts.get(status, 0) + 1\n    return counts\n"
+        }
+      },
+      {
+        "rationale": "Create test_status_rollup.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_status_rollup.py",
+          "content": "import unittest\n\nfrom status_rollup import status_counts\n\n\nclass StatusRollupTests(unittest.TestCase):\n    def test_counts_statuses(self):\n        self.assertEqual(status_counts([{'status': 'ok'}, {}, {'status': 'ok'}]), {'ok': 2, 'unknown': 1})\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_status_rollup.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-token-budget": [
+      {
+        "rationale": "Create token_budget.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "token_budget.py",
+          "content": "def estimate_tokens(text):\n    return (len(text) + 3) // 4\n\n\ndef fits_budget(text, budget):\n    return estimate_tokens(text) <= budget\n"
+        }
+      },
+      {
+        "rationale": "Create test_token_budget.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_token_budget.py",
+          "content": "import unittest\n\nfrom token_budget import estimate_tokens, fits_budget\n\n\nclass TokenBudgetTests(unittest.TestCase):\n    def test_estimates_and_checks_budget(self):\n        self.assertEqual(estimate_tokens('abcde'), 2)\n        self.assertTrue(fits_budget('abcd', 1))\n        self.assertFalse(fits_budget('abcde', 1))\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_token_budget.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-top-k": [
+      {
+        "rationale": "Create top_k.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "top_k.py",
+          "content": "def top_k(items, k):\n    if k <= 0:\n        return []\n    return sorted(items, key=lambda item: item.get('score', 0), reverse=True)[:k]\n"
+        }
+      },
+      {
+        "rationale": "Create test_top_k.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_top_k.py",
+          "content": "import unittest\n\nfrom top_k import top_k\n\n\nclass TopKTests(unittest.TestCase):\n    def test_returns_highest_scores(self):\n        items = [{'id': 'a', 'score': 1}, {'id': 'b', 'score': 3}, {'id': 'c'}]\n        self.assertEqual([item['id'] for item in top_k(items, 2)], ['b', 'a'])\n        self.assertEqual(top_k(items, 0), [])\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_top_k.py",
+          "timeout": 10
+        }
+      }
+    ]
+  }
+}

@@ -32,7 +32,9 @@ task-local memory, context compression, and repository-level context governance.
 - SWE-bench-scale adapter.
 - Web UI.
 
-## Next Release
+## Future Work
 
-`1.1.0` may add a read-only reviewer/explorer subagent. It is intentionally out
-of scope for 1.0.
+After 1.0, the project should keep strengthening evidence before expanding into
+multi-agent features. Later milestones may add train/heldout benchmark splits,
+prompt-cache governance, and eventually a read-only reviewer/explorer subagent,
+but those are intentionally out of scope for 1.0.

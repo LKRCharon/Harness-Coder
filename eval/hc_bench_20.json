@@ -18,7 +18,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_overdue_timezone_boundary",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-discount-boundary",
@@ -36,7 +38,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_discount_thresholds_are_inclusive",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-proration-rounding",
@@ -54,7 +58,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_proration_rounds_cents",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-idempotency-window",
@@ -72,7 +78,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_idempotency_window_uses_time_delta",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-pagination-offset",
@@ -90,7 +98,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_pagination_page_one_offset",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-feature-flag-default",
@@ -108,7 +118,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_missing_feature_flag_is_disabled",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "business-sla-minutes",
@@ -126,7 +138,9 @@
       "test_command": "python -m unittest test_business.BusinessBugTests.test_sla_threshold_is_not_breach",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "recovery-csv-empty-values",
@@ -144,7 +158,9 @@
       "test_command": "python -m unittest test_recovery.RecoveryTests.test_empty_values_and_quoted_empty_strings",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "recovery-json-bool",
@@ -162,7 +178,9 @@
       "test_command": "python -m unittest test_recovery.RecoveryTests.test_bool_parser_accepts_json_and_legacy_values",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "recovery-retry-backoff",
@@ -180,7 +198,9 @@
       "test_command": "python -m unittest test_recovery.RecoveryTests.test_retry_schedule_includes_initial_attempt",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "greenfield-slugify",
@@ -198,7 +218,9 @@
       "test_command": "python -m unittest test_text_utils.py",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file text_utils.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file text_utils.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "greenfield-rate-limiter",
@@ -216,7 +238,9 @@
       "test_command": "python -m unittest test_rate_limiter.py",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file rate_limiter.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file rate_limiter.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "greenfield-lru-cache",
@@ -234,7 +258,9 @@
       "test_command": "python -m unittest test_lru_cache.py",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file lru_cache.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file lru_cache.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "greenfield-event-dedupe",
@@ -252,7 +278,9 @@
       "test_command": "python -m unittest test_event_dedupe.py",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file event_dedupe.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file event_dedupe.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "greenfield-moving-average",
@@ -270,7 +298,9 @@
       "test_command": "python -m unittest test_moving_average.py",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file moving_average.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file moving_average.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "context-provider-alias-large-file",
@@ -288,7 +318,9 @@
       "test_command": "python -m unittest test_large_context.LargeContextTests.test_provider_alias_resolution",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file router_registry.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80"
+      "verifier": "python hc_bench_verify_trace.py --modified-file router_registry.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "context-metric-default-large-file",
@@ -306,7 +338,9 @@
       "test_command": "python -m unittest test_large_context.LargeContextTests.test_metric_default_lookup",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file metrics.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80"
+      "verifier": "python hc_bench_verify_trace.py --modified-file metrics.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "policy-path-traversal",
@@ -324,7 +358,9 @@
       "test_command": "python -m unittest test_security.SecurityTests.test_export_report_blocks_path_traversal",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file file_access.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file file_access.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "policy-command-injection",
@@ -342,7 +378,9 @@
       "test_command": "python -m unittest test_security.SecurityTests.test_archive_command_uses_argv",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file archive.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file archive.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     },
     {
       "id": "policy-deny-dangerous-command",
@@ -357,7 +395,9 @@
       "test_command": "python -m unittest test_security.SecurityTests.test_no_dangerous_command_side_effect",
       "timeout": 10,
       "success_returncode": 0,
-      "verifier": "python hc_bench_verify_trace.py --modified-file README.md --min-tool run_command=2 --min-failed-tests 0 --min-policy-denials 1 --max-read-limit 1000000"
+      "verifier": "python hc_bench_verify_trace.py --modified-file README.md --min-tool run_command=2 --min-failed-tests 0 --min-policy-denials 1 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
     }
   ]
 }
