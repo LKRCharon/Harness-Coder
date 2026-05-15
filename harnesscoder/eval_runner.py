@@ -367,6 +367,9 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     context_packs = _sum_metric(results, "context_packed_count")
     context_injections = _sum_metric(results, "context_injected_count")
     estimated_context_tokens = _sum_metric(results, "estimated_context_tokens")
+    stable_prefix_tokens = _sum_metric(results, "stable_prefix_tokens")
+    dynamic_suffix_tokens = _sum_metric(results, "dynamic_suffix_tokens")
+    stable_prefix_changes = _sum_metric(results, "stable_prefix_change_count")
     memory_updates = _sum_metric(results, "memory_updated_count")
     repo_map_built = _sum_metric(results, "repo_map_built_count")
     repo_map_used = _sum_metric(results, "repo_map_used_count")
@@ -419,6 +422,9 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Context packs | {context_packs} |",
         f"| Context injections | {context_injections} |",
         f"| Estimated context tokens | {estimated_context_tokens} |",
+        f"| Stable prefix tokens | {stable_prefix_tokens} |",
+        f"| Dynamic suffix tokens | {dynamic_suffix_tokens} |",
+        f"| Stable prefix changes | {stable_prefix_changes} |",
         f"| Memory updates | {memory_updates} |",
         f"| RepoMap builds | {repo_map_built} |",
         f"| RepoMap uses | {repo_map_used} |",
@@ -565,8 +571,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -642,6 +648,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "failed_tool_count")),
                     str(_sum_metric(results, "context_injected_count")),
                     str(_sum_metric(results, "estimated_context_tokens")),
+                    str(_sum_metric(results, "stable_prefix_change_count")),
                     str(_sum_metric(results, "memory_updated_count")),
                     str(_sum_metric(results, "repo_map_used_count")),
                     str(_sum_metric(results, "repo_map_injected_count")),
@@ -1356,6 +1363,9 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         "context_packed_count",
         "context_injected_count",
         "estimated_context_tokens",
+        "stable_prefix_tokens",
+        "dynamic_suffix_tokens",
+        "stable_prefix_change_count",
         "memory_updated_count",
         "compression_count",
         "hot_observation_count",

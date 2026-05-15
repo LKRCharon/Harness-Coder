@@ -9,9 +9,10 @@ This roadmap is intentionally conservative. The project should not grow into a
 generic multi-agent framework, a LangGraph clone, or a web UI before the single
 agent runtime is demonstrably reliable.
 
-## Current Release: 1.0.x
+## Current Release: 1.1.x
 
-The 1.0 line is the interview-ready baseline:
+The 1.1 line keeps the 1.0 interview-ready baseline and adds
+prompt-cache-aware context governance:
 
 - Event-sourced agent loop with JSONL traces.
 - Policy-gated local tools.
@@ -23,10 +24,12 @@ The 1.0 line is the interview-ready baseline:
 - Context governance through packing, task-local memory, compression metrics,
   and lightweight RepoMap.
 - Observation artifact storage for large tool outputs.
+- Prompt fingerprints, stable-prefix token estimates, and cache-break metrics
+  for every model-step prompt.
 
-### 1.0.x Quality Work
+### 1.1.x Quality Work
 
-Near-term 1.0.x releases should focus on tightening evidence rather than adding
+Near-term 1.1.x releases should focus on tightening evidence rather than adding
 new product surfaces:
 
 - Keep unit tests and HC-Bench-20 oracle green.
@@ -38,10 +41,11 @@ new product surfaces:
 - Keep matrix reports readable as metrics grow.
 - Preserve deterministic baselines so model changes can be separated from
   harness regressions.
+- Keep prompt/tool ordering deterministic and report stable-prefix changes.
 
-## 1.1.0: Read-Only Reviewer / Explorer Subagent
+## 1.2.0: Read-Only Reviewer / Explorer Subagent
 
-1.1 may add a small read-only subagent lane. It should be a reviewer/explorer,
+1.2 may add a small read-only subagent lane. It should be a reviewer/explorer,
 not a general multi-agent platform.
 
 Scope:

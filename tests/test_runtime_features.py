@@ -449,6 +449,9 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         metrics = summary["metrics"]
         self.assertEqual(metrics["context_injected_count"], 2)
         self.assertGreater(metrics["estimated_context_tokens"], 0)
+        self.assertGreater(metrics["stable_prefix_tokens"], 0)
+        self.assertGreater(metrics["dynamic_suffix_tokens"], 0)
+        self.assertEqual(metrics["stable_prefix_change_count"], 0)
         self.assertEqual(metrics["memory_updated_count"], 1)
         self.assertIn("task/explored_files", state["memory_blocks"])
         self.assertIn("read README.md", state["memory_blocks"]["task/explored_files"]["value"])
@@ -539,6 +542,7 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "max_iterations")
         self.assertEqual(summary["metrics"]["finish_grace_attempt_count"], 1)
         self.assertEqual(summary["metrics"]["finish_grace_success_count"], 0)
+        self.assertEqual(summary["metrics"]["stable_prefix_change_count"], 1)
         self.assertEqual(summary["failure_category"], "max_iterations")
 
     def test_finish_grace_is_not_offered_without_successful_tests(self) -> None:

@@ -57,6 +57,7 @@ class AgentRunner:
         self.repo_map = RepoMapCache(self.cwd)
         self.repo_map_max_tokens = repo_map_max_tokens
         self.repo_map_mode = repo_map_mode
+        self._stable_prefix_hash: str | None = None
 
     def run(self, task: str) -> RunResult:
         run_id = self._new_run_id()
@@ -151,6 +152,7 @@ class AgentRunner:
                 summary=context_pack["cold_trace_summary"],
                 packed_context=context_pack,
                 context_pack=context_pack,
+                **self._prompt_cache_trace_fields(context),
                 **context.to_trace_record(),
                 **context_pack,
             )
@@ -284,6 +286,7 @@ class AgentRunner:
                     packed_context=context_pack,
                     context_pack=context_pack,
                     finish_grace=True,
+                    **self._prompt_cache_trace_fields(context),
                     **context.to_trace_record(),
                     **context_pack,
                 )
@@ -401,6 +404,31 @@ class AgentRunner:
             for tool_name in MODEL_TOOL_NAMES
             if tool_name in self.policy.allowed_tools
         ]
+
+    def _prompt_cache_trace_fields(self, context: object) -> dict[str, object]:
+        fingerprint = getattr(context, "prompt_fingerprint", {})
+        stable_hash = (
+            fingerprint.get("stable_prefix_hash")
+            if isinstance(fingerprint, dict)
+            else None
+        )
+        previous_hash = self._stable_prefix_hash
+        if previous_hash is None:
+            self._stable_prefix_hash = stable_hash
+            return {
+                "stable_prefix_changed": False,
+                "cache_break_reason": None,
+            }
+        if stable_hash == previous_hash:
+            return {
+                "stable_prefix_changed": False,
+                "cache_break_reason": None,
+            }
+        self._stable_prefix_hash = stable_hash
+        return {
+            "stable_prefix_changed": True,
+            "cache_break_reason": "stable prompt prefix changed",
+        }
 
     def _emit_state_updated(self, trace: TraceWriter, state: AgentState) -> None:
         trace.emit("state_updated", state=state.snapshot())

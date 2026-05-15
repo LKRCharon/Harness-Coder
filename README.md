@@ -224,9 +224,12 @@ For interview-facing material, see [docs/showcase.md](docs/showcase.md) and
 [docs/architecture.md](docs/architecture.md).
 For release checks, see [docs/release-checklist.md](docs/release-checklist.md)
 and [docs/spec-1.0.0.md](docs/spec-1.0.0.md). The 1.0.1 evaluation tightening
-is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md), and the 1.0.2
-observation artifact store is scoped in
-[docs/spec-1.0.2.md](docs/spec-1.0.2.md).
+is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md), the 1.0.2 observation
+artifact store is scoped in [docs/spec-1.0.2.md](docs/spec-1.0.2.md), and the
+1.1.0 prompt cache governance work is scoped in
+[docs/spec-1.1.0.md](docs/spec-1.1.0.md). The Claude Code prompt caching note
+that motivated 1.1 is summarized in
+[docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md).
 
 ## Replay And Eval
 

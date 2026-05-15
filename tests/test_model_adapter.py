@@ -148,6 +148,58 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("important output", payload)
         self.assertEqual(payload.count("important output"), 1)
 
+    def test_context_assembly_records_prompt_cache_fingerprints(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file", "run_tests"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+        record = context.to_trace_record()
+
+        self.assertIn("stable_prefix_hash", record["prompt_fingerprint"])
+        self.assertIn("tool_schema_hash", record["prompt_fingerprint"])
+        self.assertGreater(record["prompt_sections"]["stable_prefix_tokens"], 0)
+        self.assertEqual(
+            record["stable_prefix_tokens"],
+            record["prompt_sections"]["stable_prefix_tokens"],
+        )
+
+    def test_prompt_cache_fingerprint_changes_when_tool_order_changes(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        first = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file", "run_tests"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+        second = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["run_tests", "read_file"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+
+        self.assertNotEqual(
+            first.prompt_fingerprint["stable_prefix_hash"],
+            second.prompt_fingerprint["stable_prefix_hash"],
+        )
+
     def test_openai_chat_payload_uses_chat_completions_shape(self) -> None:
         state = AgentState(
             run_id="run_test",

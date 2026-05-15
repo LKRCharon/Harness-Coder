@@ -229,6 +229,9 @@ def _metrics_summary(
         "context_packed_count": _event_count(records, "context_packed"),
         "context_injected_count": _context_injected_count(records),
         "estimated_context_tokens": _estimated_context_tokens(records),
+        "stable_prefix_tokens": _prompt_section_tokens(records, "stable_prefix_tokens"),
+        "dynamic_suffix_tokens": _prompt_section_tokens(records, "dynamic_suffix_tokens"),
+        "stable_prefix_change_count": _stable_prefix_change_count(records),
         "memory_updated_count": _event_count(records, "memory_updated"),
         "repo_map_built_count": _event_count(records, "repo_map_built"),
         "repo_map_used_count": _event_count(records, "repo_map_used"),
@@ -397,6 +400,28 @@ def _estimated_context_tokens(records: list[JsonRecord]) -> int:
             continue
         total += _as_int(record.get("estimated_tokens"))
     return total
+
+
+def _prompt_section_tokens(records: list[JsonRecord], key: str) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        sections = record.get("prompt_sections")
+        if isinstance(sections, dict):
+            total += _as_int(sections.get(key))
+            continue
+        total += _as_int(record.get(key))
+    return total
+
+
+def _stable_prefix_change_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and record.get("stable_prefix_changed") is True
+    )
 
 
 def _repo_map_injected_count(records: list[JsonRecord]) -> int:

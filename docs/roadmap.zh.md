@@ -8,9 +8,9 @@ HarnessCoder 的路线只围绕一个核心判断：
 所以 1.0 之后也不应该马上扩成多 agent 平台、LangGraph/DAG 框架或 Web UI。
 路线重点仍然是把单 agent runtime 的证据链做扎实。
 
-## 当前版本：1.0.x
+## 当前版本：1.1.x
 
-1.0.x 是可展示、可复现的面试基线：
+1.1.x 保留 1.0 的可展示、可复现基线，并加入 prompt-cache-aware 的上下文治理：
 
 - 基于 JSONL trace 的事件化 agent loop。
 - 经过策略门控的本地工具。
@@ -21,10 +21,11 @@ HarnessCoder 的路线只围绕一个核心判断：
 - 通过 model profiles 运行真实模型 matrix report。
 - 通过 context pack、任务内 memory、compression metrics 和轻量 RepoMap 做上下文治理。
 - 对大工具输出做 observation artifact 存储，保证上下文受控但审计证据不丢。
+- 为每轮模型 prompt 记录 fingerprint、stable-prefix token 估算和 cache-break 指标。
 
-### 1.0.x 打磨重点
+### 1.1.x 打磨重点
 
-近期 1.0.x 不继续堆新功能，而是强化证据质量：
+近期 1.1.x 不继续堆新功能，而是强化证据质量：
 
 - 保持 unit tests 和 HC-Bench-20 oracle 全绿。
 - 公开文档不暴露私人 provider 名、私人 endpoint 或本地 secret。
@@ -32,10 +33,11 @@ HarnessCoder 的路线只围绕一个核心判断：
 - 每修一个 trace、replay、context、memory、RepoMap 或 artifact 相关 bug，都补一个小回归测试。
 - 随着指标增多，保持 matrix report 仍然能读。
 - 保留 deterministic baseline，把模型波动和 harness 回归分开。
+- 保持 prompt / tool ordering 确定，并在报告里暴露 stable-prefix 变化。
 
-## 1.1.0：只读 Reviewer / Explorer Subagent
+## 1.2.0：只读 Reviewer / Explorer Subagent
 
-1.1 可以加入一个小的只读 subagent，但定位是 reviewer/explorer，不是通用多
+1.2 可以加入一个小的只读 subagent，但定位是 reviewer/explorer，不是通用多
 agent 平台。
 
 范围：
