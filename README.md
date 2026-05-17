@@ -1,5 +1,7 @@
 # HarnessCoder
 
+[English](README.md) | [简体中文](README.zh.md)
+
 HarnessCoder is a local coding agent harness for real repository tasks. The 1.0
 story is deliberately narrow:
 
