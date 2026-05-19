@@ -23,6 +23,41 @@ flowchart TD
     State --> Runner
 ```
 
+## Runtime Control Plane
+
+HarnessCoder does not need a Hermes-style multi-platform Gateway. There is no
+Telegram, Discord, email, or web ingress layer in the near-term roadmap. The
+useful lesson is narrower: user entrypoints and the agent runtime should be
+separated.
+
+The local entrypoints are CLI, TUI, and eval runner. They should talk to a small
+runtime control plane before touching the loop:
+
+```mermaid
+flowchart LR
+    CLI["CLI"] --> Control["RunControlPlane"]
+    TUI["TUI"] --> Control
+    Eval["Eval runner"] --> Control
+    Control --> Runner["AgentRunner"]
+    Runner --> Trace["TraceWriter"]
+    Runner --> Checkpoint["checkpoint.json"]
+    Trace --> Replay["Replay"]
+    Trace --> Report["Eval report / matrix"]
+```
+
+The first slice lives in `harnesscoder/core/control.py`. It centralizes
+active-run decisions that used to be easy to scatter through UI code:
+
+- a new run is blocked while another run is active;
+- exit is blocked while a run is active until cancellation is implemented;
+- only read-only slash commands such as `/help`, `/status`, and `/trace` are
+  allowed during an active run.
+
+Future run controls should grow from this runtime boundary, not as one-off TUI
+branches. That includes live status, trace inspection, interrupt/cancel,
+resume, approval prompts, and active-run protection. UI code can render the
+decision, but the decision belongs to runtime control.
+
 ## Runtime Pieces
 
 `AgentRunner` owns the loop. Each iteration assembles prompt context, asks the
@@ -32,7 +67,11 @@ state, writes a trace event, and saves a checkpoint.
 `ModelAdapter` is deliberately small. `scripted` and `hc-bench-oracle` are local
 control arms; `openai-codex` uses a Responses-style endpoint; `openai-chat` uses
 a Chat Completions-style endpoint. All adapters must return the same
-`ModelAction` shape.
+`ModelAction` shape. Codex Responses profiles may carry a runtime
+`reasoning_effort` (`none|minimal|low|medium|high|xhigh`), which is normalized
+inside the adapter, translated into the Responses `reasoning` payload, and
+recorded in `run_started.model_metadata`. Chat Completions profiles do not
+receive this field.
 
 `ToolPolicy` is the gate before local effects. File tools must stay inside the
 workspace, write/edit calls validate their arguments, test commands are narrow,
@@ -101,6 +140,9 @@ flowchart LR
     Replay --> Report["Markdown report / matrix"]
 ```
 
-HC-Bench-20 has bugfix, recovery, greenfield, context, and policy cases. The
-oracle profile proves the harness and verifier contracts are solvable before
-real-model profiles are compared.
+HC-Bench-20 has bugfix, recovery, greenfield, context, and policy cases.
+HC-Bench-40 keeps those cases comparable and adds harder heldout coverage:
+ProgramBench-style programming repairs, parser recovery, richer greenfield
+tasks, large-context lookup tasks, and policy/security cases. The oracle profile
+proves the harness and verifier contracts are solvable before real-model
+profiles are compared.

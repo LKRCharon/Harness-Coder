@@ -12,6 +12,7 @@ from harnesscoder.core.models import (
     OpenAIChatModel,
     OpenAICodexModel,
     ScriptedModel,
+    normalize_reasoning_effort,
 )
 
 
@@ -24,6 +25,7 @@ class ModelProfile:
     api_key_env: str = "OPENAI_API_KEY"
     timeout: int = 60
     max_output_tokens: int = 1200
+    reasoning_effort: str | None = None
 
     @classmethod
     def from_record(cls, name: str, record: dict[str, Any]) -> "ModelProfile":
@@ -33,10 +35,17 @@ class ModelProfile:
         api_key_env = _optional_str(record, "api_key_env") or "OPENAI_API_KEY"
         timeout = _optional_int(record, "timeout", 60)
         max_output_tokens = _optional_int(record, "max_output_tokens", 1200)
+        reasoning_effort = normalize_reasoning_effort(
+            _optional_str(record, "reasoning_effort")
+        )
 
         if provider in {"scripted", "hc-bench-oracle"}:
             return cls(name=name, provider=provider)
         if provider in {"openai-codex", "openai-chat"}:
+            if provider == "openai-chat" and reasoning_effort is not None:
+                raise ValueError(
+                    "reasoning_effort is only supported by openai-codex profiles"
+                )
             return cls(
                 name=name,
                 provider=provider,
@@ -45,6 +54,7 @@ class ModelProfile:
                 api_key_env=api_key_env,
                 timeout=timeout,
                 max_output_tokens=max_output_tokens,
+                reasoning_effort=reasoning_effort,
             )
         raise ValueError(f"unsupported model profile provider: {provider}")
 
@@ -80,12 +90,23 @@ class ModelProfile:
             )
             return ProfiledModel(
                 self.name,
-                model_cls(
-                    api_key=api_key,
-                    model=model,
-                    base_url=base_url,
-                    timeout=self.timeout,
-                    max_output_tokens=self.max_output_tokens,
+                (
+                    model_cls(
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                        timeout=self.timeout,
+                        max_output_tokens=self.max_output_tokens,
+                        reasoning_effort=self.reasoning_effort,
+                    )
+                    if self.provider == "openai-codex"
+                    else model_cls(
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                        timeout=self.timeout,
+                        max_output_tokens=self.max_output_tokens,
+                    )
                 ),
             )
 
@@ -104,6 +125,17 @@ class ProfiledModel:
 
     def next_action(self, state: Any, context: Any = None) -> Any:
         return self.adapter.next_action(state, context)
+
+    def model_metadata(self) -> dict[str, Any]:
+        adapter_metadata = getattr(self.adapter, "model_metadata", None)
+        if callable(adapter_metadata):
+            metadata = dict(adapter_metadata())
+        else:
+            metadata = {
+                "provider": getattr(self.adapter, "name", type(self.adapter).__name__)
+            }
+        metadata["profile_name"] = self.profile_name
+        return metadata
 
 
 def load_model_profiles(config_path: str | Path) -> dict[str, ModelProfile]:

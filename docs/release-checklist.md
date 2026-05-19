@@ -1,4 +1,4 @@
-# HarnessCoder 1.0 Release Checklist
+# HarnessCoder Release Checklist
 
 Use this checklist before tagging or publishing the repository.
 
@@ -12,6 +12,12 @@ python -m harnesscoder \
   --eval eval/hc_bench_20.json \
   --max-iterations 8 \
   --eval-report .harnesscoder/reports/hc-bench-20-oracle.md
+
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_40.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-40-oracle.md
 
 python -m harnesscoder --version
 ```
@@ -58,7 +64,7 @@ python -m harnesscoder \
   `scripts/`, and `models.example.toml` for accidental local endpoint names.
 - Confirm `LICENSE`, CI, examples, and docs are present.
 
-## 1.0 Non-Goals
+## Current Non-Goals
 
 - No subagents.
 - No long-term memory platform.

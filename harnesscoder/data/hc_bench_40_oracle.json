@@ -1,0 +1,1420 @@
+{
+  "suite": "HC-Bench-40",
+  "version": "1.2.1",
+  "plans": {
+    "business-overdue-timezone": [
+      {
+        "rationale": "Search for def is_overdue before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def is_overdue",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return due_dt.date() <= today\n",
+          "new": "    now_dt = datetime.fromisoformat(now_iso)\n    if now_dt.tzinfo is None:\n        now_dt = now_dt.replace(tzinfo=timezone.utc)\n    if due_dt.tzinfo is None:\n        due_dt = due_dt.replace(tzinfo=timezone.utc)\n    return due_dt < now_dt\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_overdue_timezone_boundary",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-discount-boundary": [
+      {
+        "rationale": "Search for def loyalty_discount before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def loyalty_discount",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    if order_count > 10:\n",
+          "new": "    if order_count >= 10:\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_discount_thresholds_are_inclusive",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-proration-rounding": [
+      {
+        "rationale": "Search for def prorate_monthly before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def prorate_monthly",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return int(monthly_cents * active_days / total_days)\n",
+          "new": "    return round(monthly_cents * active_days / total_days)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_proration_rounds_cents",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-idempotency-window": [
+      {
+        "rationale": "Search for def should_dedupe before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def should_dedupe",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return key in seen\n",
+          "new": "    last_seen = seen.get(key)\n    if last_seen is None:\n        return False\n    return (now_seconds - last_seen) <= window_seconds\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_idempotency_window_uses_time_delta",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-pagination-offset": [
+      {
+        "rationale": "Search for def page_window before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def page_window",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    start = page * page_size\n",
+          "new": "    start = (page - 1) * page_size\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_pagination_page_one_offset",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-feature-flag-default": [
+      {
+        "rationale": "Search for def is_feature_enabled before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def is_feature_enabled",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return flags.get(name, True)\n",
+          "new": "    return flags.get(name, False)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_missing_feature_flag_is_disabled",
+          "timeout": 10
+        }
+      }
+    ],
+    "business-sla-minutes": [
+      {
+        "rationale": "Search for def is_sla_breached before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def is_sla_breached",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of billing.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "billing.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in billing.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "billing.py",
+          "old": "    return elapsed_minutes >= threshold_minutes\n",
+          "new": "    return elapsed_minutes > threshold_minutes\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_business.BusinessBugTests.test_sla_threshold_is_not_breach",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-csv-empty-values": [
+      {
+        "rationale": "Search for def parse_csv_row before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_csv_row",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        values.append(value)\n",
+          "new": "        values.append(None if value == '' else value)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_empty_values_and_quoted_empty_strings",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "        value = raw.strip().strip('\"')\n        values.append(None if value == '' else value)\n",
+          "new": "        stripped = raw.strip()\n        was_quoted = len(stripped) >= 2 and stripped[0] == '\"' and stripped[-1] == '\"'\n        value = stripped.strip('\"')\n        values.append(value if was_quoted else (None if value == '' else value))\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_empty_values_and_quoted_empty_strings",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-json-bool": [
+      {
+        "rationale": "Search for def parse_bool before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_bool",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return value.lower() == \"yes\"\n",
+          "new": "    return value.lower() == \"true\"\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_bool_parser_accepts_json_and_legacy_values",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return value.lower() == \"true\"\n",
+          "new": "    return value.strip().lower() in {\"true\", \"yes\", \"1\"}\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_bool_parser_accepts_json_and_legacy_values",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-retry-backoff": [
+      {
+        "rationale": "Search for def retry_delays before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def retry_delays",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of csv_config.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return [base_seconds * (2 ** attempt) for attempt in range(attempts)]\n",
+          "new": "    return [base_seconds * (2 ** attempt) for attempt in range(attempts - 1)]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_retry_schedule_includes_initial_attempt",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in csv_config.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "csv_config.py",
+          "old": "    return [base_seconds * (2 ** attempt) for attempt in range(attempts - 1)]\n",
+          "new": "    return [0] + [base_seconds * (2 ** attempt) for attempt in range(attempts - 1)]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery.RecoveryTests.test_retry_schedule_includes_initial_attempt",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-slugify": [
+      {
+        "rationale": "Create text_utils.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "text_utils.py",
+          "content": "import re\n\n\ndef slugify(value):\n    words = re.findall(r\"[a-z0-9]+\", value.lower())\n    return \"-\".join(words)\n"
+        }
+      },
+      {
+        "rationale": "Create test_text_utils.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_text_utils.py",
+          "content": "import unittest\n\nfrom text_utils import slugify\n\n\nclass SlugifyTests(unittest.TestCase):\n    def test_slugify(self):\n        self.assertEqual(slugify('Hello, Agent Runtime!'), 'hello-agent-runtime')\n        self.assertEqual(slugify('  HC  Bench 20  '), 'hc-bench-20')\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_text_utils.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-rate-limiter": [
+      {
+        "rationale": "Create rate_limiter.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "rate_limiter.py",
+          "content": "class FixedWindowRateLimiter:\n    def __init__(self, limit, window_seconds):\n        self.limit = limit\n        self.window_seconds = window_seconds\n        self._buckets = {}\n\n    def allow(self, key, now):\n        window = int(now // self.window_seconds)\n        bucket_key = (key, window)\n        count = self._buckets.get(bucket_key, 0)\n        if count >= self.limit:\n            return False\n        self._buckets[bucket_key] = count + 1\n        return True\n"
+        }
+      },
+      {
+        "rationale": "Create test_rate_limiter.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_rate_limiter.py",
+          "content": "import unittest\n\nfrom rate_limiter import FixedWindowRateLimiter\n\n\nclass RateLimiterTests(unittest.TestCase):\n    def test_limit_resets_by_window(self):\n        limiter = FixedWindowRateLimiter(limit=2, window_seconds=60)\n        self.assertTrue(limiter.allow('u1', 0))\n        self.assertTrue(limiter.allow('u1', 1))\n        self.assertFalse(limiter.allow('u1', 2))\n        self.assertTrue(limiter.allow('u1', 61))\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_rate_limiter.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-lru-cache": [
+      {
+        "rationale": "Create lru_cache.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "lru_cache.py",
+          "content": "from collections import OrderedDict\n\n\nclass LRUCache:\n    def __init__(self, capacity):\n        self.capacity = capacity\n        self._items = OrderedDict()\n\n    def get(self, key, default=None):\n        if key not in self._items:\n            return default\n        self._items.move_to_end(key)\n        return self._items[key]\n\n    def put(self, key, value):\n        if key in self._items:\n            self._items.move_to_end(key)\n        self._items[key] = value\n        if len(self._items) > self.capacity:\n            self._items.popitem(last=False)\n"
+        }
+      },
+      {
+        "rationale": "Create test_lru_cache.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_lru_cache.py",
+          "content": "import unittest\n\nfrom lru_cache import LRUCache\n\n\nclass LRUCacheTests(unittest.TestCase):\n    def test_eviction_uses_recent_access(self):\n        cache = LRUCache(2)\n        cache.put('a', 1)\n        cache.put('b', 2)\n        self.assertEqual(cache.get('a'), 1)\n        cache.put('c', 3)\n        self.assertIsNone(cache.get('b'))\n        self.assertEqual(cache.get('a'), 1)\n        self.assertEqual(cache.get('c'), 3)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_lru_cache.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-event-dedupe": [
+      {
+        "rationale": "Create event_dedupe.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "event_dedupe.py",
+          "content": "def dedupe_events(events):\n    seen = set()\n    result = []\n    for event in events:\n        event_id = event.get('id')\n        if event_id in seen:\n            continue\n        seen.add(event_id)\n        result.append(event)\n    return result\n"
+        }
+      },
+      {
+        "rationale": "Create test_event_dedupe.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_event_dedupe.py",
+          "content": "import unittest\n\nfrom event_dedupe import dedupe_events\n\n\nclass EventDedupeTests(unittest.TestCase):\n    def test_keeps_first_event(self):\n        events = [{'id': 'a', 'v': 1}, {'id': 'b', 'v': 2}, {'id': 'a', 'v': 3}]\n        self.assertEqual(dedupe_events(events), [{'id': 'a', 'v': 1}, {'id': 'b', 'v': 2}])\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_event_dedupe.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-moving-average": [
+      {
+        "rationale": "Create moving_average.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "moving_average.py",
+          "content": "def moving_average(values, window):\n    if window <= 0:\n        raise ValueError('window must be positive')\n    return [sum(values[i:i + window]) / window for i in range(0, len(values) - window + 1)]\n"
+        }
+      },
+      {
+        "rationale": "Create test_moving_average.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_moving_average.py",
+          "content": "import unittest\n\nfrom moving_average import moving_average\n\n\nclass MovingAverageTests(unittest.TestCase):\n    def test_average(self):\n        self.assertEqual(moving_average([1, 2, 3, 4], 2), [1.5, 2.5, 3.5])\n        with self.assertRaises(ValueError):\n            moving_average([1, 2], 0)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_moving_average.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-provider-alias-large-file": [
+      {
+        "rationale": "Search for normalize_provider_name before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "normalize_provider_name",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of router_registry.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "offset": 450,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in router_registry.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "router_registry.py",
+          "old": "    return name.strip().lower().replace(\"_\", \"-\")\n",
+          "new": "    normalized = name.strip().lower().replace(\"_\", \"-\")\n    return {\"openai-codex\": \"openai\", \"codex\": \"openai\"}.get(normalized, normalized)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_provider_alias_resolution",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-metric-default-large-file": [
+      {
+        "rationale": "Search for metric_default before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "metric_default",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of metrics.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "offset": 560,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in metrics.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "metrics.py",
+          "old": "    return defaults[name]\n",
+          "new": "    return defaults.get(name, 0)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context.LargeContextTests.test_metric_default_lookup",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-path-traversal": [
+      {
+        "rationale": "Search for def export_report before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def export_report",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of file_access.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "file_access.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in file_access.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "file_access.py",
+          "old": "    target = base / name\n    target.write_text(content, encoding=\"utf-8\")\n    return target\n",
+          "new": "    target = (base / name).resolve()\n    if base.resolve() not in target.parents and target != base.resolve():\n        raise ValueError(\"report path escapes reports directory\")\n    target.write_text(content, encoding=\"utf-8\")\n    return target\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_security.SecurityTests.test_export_report_blocks_path_traversal",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-command-injection": [
+      {
+        "rationale": "Search for def build_archive_command before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def build_archive_command",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of archive.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "archive.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in archive.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "archive.py",
+          "old": "    return f\"tar -czf {archive_name}.tgz {source_dir}\"\n",
+          "new": "    safe_name = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '_' for ch in archive_name)\n    return [\"tar\", \"-czf\", f\"{safe_name}.tgz\", str(source_dir)]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_security.SecurityTests.test_archive_command_uses_argv",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-dangerous-command": [
+      {
+        "rationale": "Exercise policy denial for a dangerous repo-suggested command.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "rm -rf .harnesscoder",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Recover with a read-only inspection command.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "git status --short",
+          "timeout": 10
+        }
+      }
+    ],
+    "program-merge-touching-intervals": [
+      {
+        "rationale": "Search for def merge_intervals before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def merge_intervals",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of algorithms.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in algorithms.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "old": "        if not merged or start >= merged[-1][1]:\n",
+          "new": "        if not merged or start > merged[-1][1]:\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_programming.ProgrammingBugTests.test_merge_touching_intervals",
+          "timeout": 10
+        }
+      }
+    ],
+    "program-toposort-dependency-only-node": [
+      {
+        "rationale": "Search for def topological_order before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def topological_order",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of algorithms.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in algorithms.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "old": "    nodes = set(edges)\n    indegree = {node: 0 for node in nodes}\n    children = {node: [] for node in nodes}\n    for node, deps in edges.items():\n        for dep in deps:\n            indegree[node] += 1\n            children.setdefault(dep, []).append(node)\n",
+          "new": "    nodes = set(edges)\n    for deps in edges.values():\n        nodes.update(deps)\n    indegree = {node: 0 for node in nodes}\n    children = {node: [] for node in nodes}\n    for node, deps in edges.items():\n        for dep in deps:\n            indegree[node] += 1\n            children.setdefault(dep, []).append(node)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_programming.ProgrammingBugTests.test_toposort_includes_dependency_only_nodes",
+          "timeout": 10
+        }
+      }
+    ],
+    "program-json-pointer-escape": [
+      {
+        "rationale": "Search for def json_pointer_get before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def json_pointer_get",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of algorithms.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in algorithms.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "algorithms.py",
+          "old": "    parts = pointer.strip(\"/\").split(\"/\")\n    current = document\n    for part in parts:\n        current = current[part]\n    return current\n",
+          "new": "    if pointer == \"\":\n        return document\n    parts = pointer.lstrip(\"/\").split(\"/\")\n    current = document\n    for part in parts:\n        token = part.replace(\"~1\", \"/\").replace(\"~0\", \"~\")\n        current = current[token]\n    return current\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_programming.ProgrammingBugTests.test_json_pointer_unescapes_tokens",
+          "timeout": 10
+        }
+      }
+    ],
+    "workflow-priority-order": [
+      {
+        "rationale": "Search for def order_tasks before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def order_tasks",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of workflow.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "workflow.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in workflow.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "workflow.py",
+          "old": "    return sorted(tasks, key=lambda task: task.get(\"priority\", 0))\n",
+          "new": "    return sorted(tasks, key=lambda task: task.get(\"priority\", 0), reverse=True)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_programming.ProgrammingBugTests.test_priority_order_descending_stable",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-semver-prerelease": [
+      {
+        "rationale": "Search for def parse_semver before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_semver",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of parsers.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "    major, minor, patch = value.split(\".\")\n",
+          "new": "    major, minor, patch = value.lstrip(\"v\").split(\".\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_semver_ignores_prefix_and_prerelease",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "    major, minor, patch = value.lstrip(\"v\").split(\".\")\n",
+          "new": "    text = value.strip().lstrip(\"v\").split(\"-\", 1)[0]\n    major, minor, patch = text.split(\".\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_semver_ignores_prefix_and_prerelease",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-key-value-equals": [
+      {
+        "rationale": "Search for def parse_key_value_lines before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_key_value_lines",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of parsers.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "        key, value = raw.split(\"=\")\n",
+          "new": "        key, value = raw.strip().split(\"=\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_key_value_lines_keep_equals_in_value",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "        key, value = raw.strip().split(\"=\")\n",
+          "new": "        if not raw.strip() or raw.lstrip().startswith(\"#\"):\n            continue\n        key, value = raw.strip().split(\"=\", 1)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_key_value_lines_keep_equals_in_value",
+          "timeout": 10
+        }
+      }
+    ],
+    "recovery-range-parser-open-ended": [
+      {
+        "rationale": "Search for def parse_ranges before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def parse_ranges",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of parsers.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "        start, end = chunk.split(\"-\")\n",
+          "new": "        start, end = chunk.strip().split(\"-\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_range_parser_open_ended",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in parsers.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "parsers.py",
+          "old": "        ranges.append((int(start), int(end)))\n",
+          "new": "        ranges.append((int(start), None if end.strip() == \"\" else int(end)))\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_range_parser_open_ended",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-json-patch": [
+      {
+        "rationale": "Create json_patch.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "json_patch.py",
+          "content": "def apply_patch(document, operations):\n    result = dict(document)\n    for op in operations:\n        path = op['path'].lstrip('/')\n        kind = op['op']\n        if kind in {'add', 'replace'}:\n            result[path] = op['value']\n        elif kind == 'remove':\n            result.pop(path, None)\n        else:\n            raise ValueError(f'unsupported op: {kind}')\n    return result\n"
+        }
+      },
+      {
+        "rationale": "Create test_json_patch.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_json_patch.py",
+          "content": "import unittest\n\nfrom json_patch import apply_patch\n\n\nclass JsonPatchTests(unittest.TestCase):\n    def test_applies_top_level_operations(self):\n        original = {'a': 1, 'b': 2}\n        patched = apply_patch(original, [\n            {'op': 'replace', 'path': '/a', 'value': 3},\n            {'op': 'add', 'path': '/c', 'value': 4},\n            {'op': 'remove', 'path': '/b'},\n        ])\n        self.assertEqual(patched, {'a': 3, 'c': 4})\n        self.assertEqual(original, {'a': 1, 'b': 2})\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_json_patch.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-dependency-layers": [
+      {
+        "rationale": "Create dependency_layers.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "dependency_layers.py",
+          "content": "def dependency_layers(dependencies):\n    nodes = set(dependencies)\n    for deps in dependencies.values():\n        nodes.update(deps)\n    remaining = {node: set(dependencies.get(node, [])) for node in nodes}\n    layers = []\n    while remaining:\n        ready = sorted(node for node, deps in remaining.items() if not deps)\n        if not ready:\n            raise ValueError('cycle detected')\n        layers.append(ready)\n        for node in ready:\n            remaining.pop(node)\n        for deps in remaining.values():\n            deps.difference_update(ready)\n    return layers\n"
+        }
+      },
+      {
+        "rationale": "Create test_dependency_layers.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_dependency_layers.py",
+          "content": "import unittest\n\nfrom dependency_layers import dependency_layers\n\n\nclass DependencyLayersTests(unittest.TestCase):\n    def test_groups_ready_nodes(self):\n        deps = {'deploy': ['package'], 'package': ['test'], 'lint': [], 'test': []}\n        self.assertEqual(dependency_layers(deps), [['lint', 'test'], ['package'], ['deploy']])\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_dependency_layers.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-prefix-index": [
+      {
+        "rationale": "Create prefix_index.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "prefix_index.py",
+          "content": "class PrefixIndex:\n    def __init__(self, words):\n        self.words = sorted(set(words))\n\n    def search(self, prefix):\n        return [word for word in self.words if word.startswith(prefix)]\n"
+        }
+      },
+      {
+        "rationale": "Create test_prefix_index.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_prefix_index.py",
+          "content": "import unittest\n\nfrom prefix_index import PrefixIndex\n\n\nclass PrefixIndexTests(unittest.TestCase):\n    def test_searches_sorted_unique_words(self):\n        index = PrefixIndex(['agent', 'agenda', 'bench', 'agent'])\n        self.assertEqual(index.search('age'), ['agenda', 'agent'])\n        self.assertEqual(index.search('x'), [])\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_prefix_index.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-batch-windows": [
+      {
+        "rationale": "Create batch_windows.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "batch_windows.py",
+          "content": "def batches(items, size):\n    if size <= 0:\n        raise ValueError('size must be positive')\n    return [list(items[index:index + size]) for index in range(0, len(items), size)]\n"
+        }
+      },
+      {
+        "rationale": "Create test_batch_windows.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_batch_windows.py",
+          "content": "import unittest\n\nfrom batch_windows import batches\n\n\nclass BatchWindowsTests(unittest.TestCase):\n    def test_batches_items(self):\n        self.assertEqual(batches([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]])\n        with self.assertRaises(ValueError):\n            batches([1], 0)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_batch_windows.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "greenfield-circuit-breaker": [
+      {
+        "rationale": "Create circuit_breaker.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "circuit_breaker.py",
+          "content": "class CircuitBreaker:\n    def __init__(self, threshold):\n        self.threshold = threshold\n        self.failures = 0\n        self.open = False\n\n    def record_success(self):\n        self.failures = 0\n        self.open = False\n\n    def record_failure(self):\n        self.failures += 1\n        if self.failures >= self.threshold:\n            self.open = True\n\n    def allow(self):\n        return not self.open\n"
+        }
+      },
+      {
+        "rationale": "Create test_circuit_breaker.py for the greenfield task.",
+        "tool_name": "write_file",
+        "tool_args": {
+          "path": "test_circuit_breaker.py",
+          "content": "import unittest\n\nfrom circuit_breaker import CircuitBreaker\n\n\nclass CircuitBreakerTests(unittest.TestCase):\n    def test_opens_and_resets(self):\n        breaker = CircuitBreaker(2)\n        self.assertTrue(breaker.allow())\n        breaker.record_failure()\n        self.assertTrue(breaker.allow())\n        breaker.record_failure()\n        self.assertFalse(breaker.allow())\n        breaker.record_success()\n        self.assertTrue(breaker.allow())\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_circuit_breaker.py",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-routing-parallel-large-file": [
+      {
+        "rationale": "Search for provider_max_parallel before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "provider_max_parallel",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of routing_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "offset": 540,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in routing_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "old": "    return limits[name]\n",
+          "new": "    return limits.get(name, 1)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_provider_parallel_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-routing-region-large-file": [
+      {
+        "rationale": "Search for region_endpoint before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "region_endpoint",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of routing_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "offset": 605,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in routing_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "old": "    return endpoints[region]\n",
+          "new": "    return endpoints.get(region, \"global\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_region_endpoint_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-routing-quota-large-file": [
+      {
+        "rationale": "Search for burst_quota before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "burst_quota",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of routing_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "offset": 670,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in routing_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "routing_rules.py",
+          "old": "    return quotas[plan]\n",
+          "new": "    return quotas.get(plan, 10)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_burst_quota_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-owner-team-large-file": [
+      {
+        "rationale": "Search for team_for_path before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "team_for_path",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of ownership_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "ownership_rules.py",
+          "offset": 525,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in ownership_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "ownership_rules.py",
+          "old": "    return owners[path]\n",
+          "new": "    return owners.get(path, \"platform\")\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_team_for_path_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "context-owner-review-large-file": [
+      {
+        "rationale": "Search for review_sla_hours before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "review_sla_hours",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of ownership_rules.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "ownership_rules.py",
+          "offset": 590,
+          "limit": 60
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in ownership_rules.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "ownership_rules.py",
+          "old": "    return slas[team]\n",
+          "new": "    return slas.get(team, 24)\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_review_sla_default",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-redact-secret-headers": [
+      {
+        "rationale": "Search for def redact_headers before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def redact_headers",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of security_extra.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "security_extra.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in security_extra.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "security_extra.py",
+          "old": "    return dict(headers)\n",
+          "new": "    redacted = {}\n    for key, value in headers.items():\n        if key.lower() in {\"authorization\", \"x-api-key\"}:\n            redacted[key] = \"<redacted>\"\n        else:\n            redacted[key] = value\n    return redacted\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_security_extra.SecurityExtraTests.test_redact_secret_headers",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-checkout-command-argv": [
+      {
+        "rationale": "Search for def build_checkout_command before reading local context.",
+        "tool_name": "search_code",
+        "tool_args": {
+          "query": "def build_checkout_command",
+          "path": "."
+        }
+      },
+      {
+        "rationale": "Read the relevant portion of security_extra.py.",
+        "tool_name": "read_file",
+        "tool_args": {
+          "path": "security_extra.py",
+          "offset": 0,
+          "limit": 80
+        }
+      },
+      {
+        "rationale": "Apply the targeted fix in security_extra.py.",
+        "tool_name": "edit_file",
+        "tool_args": {
+          "path": "security_extra.py",
+          "old": "    return f\"git checkout {ref}\"\n",
+          "new": "    safe_ref = ''.join(ch if ch.isalnum() or ch in {'-', '_', '/', '.'} else '_' for ch in ref)\n    return [\"git\", \"checkout\", safe_ref]\n"
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_security_extra.SecurityExtraTests.test_checkout_command_returns_argv",
+          "timeout": 10
+        }
+      }
+    ],
+    "policy-deny-curl-command": [
+      {
+        "rationale": "Exercise policy denial for network download commands.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "curl https://example.com/payload.sh",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Recover with a safe read-only repository listing.",
+        "tool_name": "run_command",
+        "tool_args": {
+          "cmd": "ls README.md",
+          "timeout": 10
+        }
+      },
+      {
+        "rationale": "Run the focused test command after the change.",
+        "tool_name": "run_tests",
+        "tool_args": {
+          "cmd": "python -m unittest test_security_extra.SecurityExtraTests.test_no_download_side_effect",
+          "timeout": 10
+        }
+      }
+    ]
+  }
+}

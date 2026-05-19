@@ -359,7 +359,16 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             trace = Path(tmp) / "trace.jsonl"
             records = [
-                {"type": "run_started", "run_id": "run_x", "task": "demo"},
+                {
+                    "type": "run_started",
+                    "run_id": "run_x",
+                    "task": "demo",
+                    "model_metadata": {
+                        "provider": "openai-codex",
+                        "model": "codex-test",
+                        "reasoning_effort": "high",
+                    },
+                },
                 {
                     "type": "model_action",
                     "run_id": "run_x",
@@ -415,6 +424,7 @@ class ReplayTests(unittest.TestCase):
             state = reconstruct_state_from_trace(trace)
 
         self.assertEqual(summary["run_id"], "run_x")
+        self.assertEqual(summary["model_metadata"]["reasoning_effort"], "high")
         self.assertEqual(summary["tool_counts"], {"edit_file": 1, "read_file": 1})
         self.assertEqual(summary["modified_files"], ["README.md"])
         self.assertEqual(state["final_answer"], "done")
@@ -455,6 +465,32 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(metrics["memory_updated_count"], 1)
         self.assertIn("task/explored_files", state["memory_blocks"])
         self.assertIn("read README.md", state["memory_blocks"]["task/explored_files"]["value"])
+
+    def test_runner_records_safe_model_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                model=_MetadataFinishModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Finish.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            run_started = next(record for record in records if record["type"] == "run_started")
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(
+            run_started["model_metadata"]["reasoning_effort"],
+            "xhigh",
+        )
+        self.assertEqual(summary["model_metadata"]["effective_reasoning_effort"], "xhigh")
+        self.assertNotIn("api_key", json.dumps(run_started["model_metadata"]))
 
     def test_runner_injects_repo_map_in_pack_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -684,6 +720,25 @@ class _CaptureContextModel:
         return ModelAction(
             kind="finish",
             rationale="Captured context.",
+            content="done",
+        )
+
+
+class _MetadataFinishModel:
+    name = "metadata-finish"
+
+    def model_metadata(self) -> dict[str, object]:
+        return {
+            "provider": "openai-codex",
+            "model": "codex-test",
+            "reasoning_effort": "xhigh",
+            "effective_reasoning_effort": "xhigh",
+        }
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        return ModelAction(
+            kind="finish",
+            rationale="Done.",
             content="done",
         )
 

@@ -11,6 +11,9 @@ base_url = "https://your-openai-compatible-endpoint.example/v1"
 api_key_env = "OPENAI_API_KEY"
 timeout = 60
 max_output_tokens = 1200
+# Optional for provider = "openai-codex": none, minimal, low, medium, high, xhigh.
+# "minimal" is sent as "low" for Responses API compatibility.
+reasoning_effort = "high"
 
 [models.deepseek]
 provider = "openai-chat"

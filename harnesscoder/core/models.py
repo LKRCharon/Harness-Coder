@@ -21,6 +21,8 @@ MODEL_TOOL_NAMES = (
     "run_tests",
     "run_command",
 )
+REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+REASONING_EFFORT_CHOICES = ("none", *REASONING_EFFORTS)
 
 
 class ModelAdapter(Protocol):
@@ -132,10 +134,12 @@ class OpenAICodexModel:
     base_url: str = "https://api.openai.com/v1"
     timeout: int = 60
     max_output_tokens: int = 1200
+    reasoning_effort: str | None = None
     name: str = "openai-codex"
 
     def __post_init__(self) -> None:
         self.base_url = _normalize_openai_base_url(self.base_url)
+        self.reasoning_effort = normalize_reasoning_effort(self.reasoning_effort)
 
     def next_action(
         self,
@@ -163,12 +167,16 @@ class OpenAICodexModel:
                 },
             ]
         )
-        return {
+        payload = {
             "model": self.model,
             "input": input_messages,
             "temperature": 0,
             "max_output_tokens": self.max_output_tokens,
         }
+        reasoning = reasoning_payload_for_responses(self.reasoning_effort)
+        if reasoning is not None:
+            payload["reasoning"] = reasoning
+        return payload
 
     def _post_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _post_json(
@@ -177,6 +185,20 @@ class OpenAICodexModel:
             api_key=self.api_key,
             timeout=self.timeout,
         )
+
+    def model_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "provider": self.name,
+            "model": self.model,
+            "base_url": self.base_url,
+            "max_output_tokens": self.max_output_tokens,
+        }
+        if self.reasoning_effort is not None:
+            metadata["reasoning_effort"] = self.reasoning_effort
+            effective = effective_responses_reasoning_effort(self.reasoning_effort)
+            if effective is not None:
+                metadata["effective_reasoning_effort"] = effective
+        return metadata
 
 
 @dataclass(slots=True)
@@ -235,6 +257,14 @@ class OpenAIChatModel:
             timeout=self.timeout,
         )
 
+    def model_metadata(self) -> dict[str, Any]:
+        return {
+            "provider": self.name,
+            "model": self.model,
+            "base_url": self.base_url,
+            "max_output_tokens": self.max_output_tokens,
+        }
+
 
 MODEL_SYSTEM_PROMPT = """You are the model-decision layer inside HarnessCoder.
 HarnessCoder is a local coding-agent harness. You do not directly access files,
@@ -291,6 +321,34 @@ def _normalize_openai_base_url(base_url: str) -> str:
     if not normalized.endswith("/v1"):
         normalized = f"{normalized}/v1"
     return normalized
+
+
+def normalize_reasoning_effort(effort: str | None) -> str | None:
+    if effort is None:
+        return None
+    normalized = effort.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in REASONING_EFFORT_CHOICES:
+        valid = ", ".join(REASONING_EFFORT_CHOICES)
+        raise ValueError(f"reasoning_effort must be one of: {valid}")
+    return normalized
+
+
+def effective_responses_reasoning_effort(effort: str | None) -> str | None:
+    normalized = normalize_reasoning_effort(effort)
+    if normalized is None or normalized == "none":
+        return None
+    if normalized == "minimal":
+        return "low"
+    return normalized
+
+
+def reasoning_payload_for_responses(effort: str | None) -> dict[str, str] | None:
+    effective = effective_responses_reasoning_effort(effort)
+    if effective is None:
+        return None
+    return {"effort": effective, "summary": "auto"}
 
 
 def _post_json(

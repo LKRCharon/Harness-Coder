@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import curses
 import json
+import locale
 import os
 import signal
 import shlex
 import threading
-import textwrap
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -17,9 +18,12 @@ from harnesscoder.core.models import (
     HCBenchOracleModel,
     OpenAIChatModel,
     OpenAICodexModel,
+    REASONING_EFFORT_CHOICES,
     ScriptedModel,
+    normalize_reasoning_effort,
 )
 from harnesscoder.core.artifacts import store_large_observation
+from harnesscoder.core.control import ACTIVE_RUN_READ_ONLY_COMMANDS, RunControlPlane
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
@@ -27,7 +31,7 @@ from harnesscoder.core.tools import ToolRegistry
 
 
 Role = Literal["system", "user", "assistant", "tool", "error"]
-ACTIVE_RUN_ALLOWED_COMMANDS = {"help", "status", "trace"}
+ACTIVE_RUN_ALLOWED_COMMANDS = ACTIVE_RUN_READ_ONLY_COMMANDS
 
 
 @dataclass(slots=True)
@@ -39,8 +43,12 @@ class TuiConfig:
     openai_model: str | None
     openai_api_key_env: str
     max_iterations: int
+    reasoning_effort: str | None = None
     context_mode: ContextMode = "none"
     repo_map_mode: RepoMapMode = "auto"
+
+    def __post_init__(self) -> None:
+        self.reasoning_effort = normalize_reasoning_effort(self.reasoning_effort)
 
 
 @dataclass(slots=True)
@@ -82,10 +90,12 @@ class HarnessCoderTui:
         self._colors: dict[str, int] = {}
         self._active_run: ActiveRun | None = None
         self._active_lock = threading.Lock()
+        self._control = RunControlPlane()
         self._spinner_index = 0
         self._interrupt_requested = False
 
     def run(self) -> int:
+        self._configure_locale()
         previous_sigint_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._handle_sigint)
         try:
@@ -100,6 +110,12 @@ class HarnessCoderTui:
 
     def _handle_sigint(self, _signum: int, _frame: object | None) -> None:
         self._interrupt_requested = True
+
+    def _configure_locale(self) -> None:
+        try:
+            locale.setlocale(locale.LC_ALL, "")
+        except locale.Error:
+            pass
 
     def _main(self, screen: curses.window) -> int:
         try:
@@ -231,7 +247,7 @@ class HarnessCoderTui:
         for row, (line, color_name) in enumerate(visible, start=body_start):
             if row >= body_end:
                 break
-            self._safe_addstr(screen, row, 1, line[: width - 2], color_name)
+            self._safe_addstr(screen, row, 1, self._clip(line, width - 2), color_name)
 
         self._draw_footer(screen, height, width)
         screen.refresh()
@@ -240,10 +256,10 @@ class HarnessCoderTui:
         badge, color = self._status_badge()
         lines = [
             (self._clip(f"HC [{badge}] {self._footer_status()}", width - 1), color),
-            ("> " + self.input_buffer, "user"),
+            (self._clip("> " + self.input_buffer, width - 1), "user"),
         ]
         for row, (line, color_name) in enumerate(lines[:height]):
-            self._safe_addstr(screen, row, 0, line[: width - 1], color_name)
+            self._safe_addstr(screen, row, 0, self._clip(line, width - 1), color_name)
 
     def _draw_header(self, screen: curses.window, height: int, width: int) -> int:
         card_width = self._panel_width(width)
@@ -270,6 +286,7 @@ class HarnessCoderTui:
                         ("context", self.config.context_mode),
                         ("repo-map", self.config.repo_map_mode),
                         ("iters", str(self.config.max_iterations)),
+                        ("reasoning", self.config.reasoning_effort or "-"),
                     ],
                     inner_width,
                 ),
@@ -324,13 +341,7 @@ class HarnessCoderTui:
             }[message.role]
             rendered.append((self._card_title(title, card_width), "border"))
             for raw_line in message.text.splitlines() or [""]:
-                wrapped = textwrap.wrap(
-                    raw_line,
-                    width=max(8, card_width - 4),
-                    replace_whitespace=False,
-                    drop_whitespace=False,
-                ) or [""]
-                for line in wrapped:
+                for line in _wrap_display_lines(raw_line, max(8, card_width - 4)):
                     rendered.append((self._card_body(line, card_width), color))
             rendered.append((self._card_edge(card_width), "border"))
         return rendered
@@ -367,7 +378,7 @@ class HarnessCoderTui:
     def _card_title(self, title: str, width: int) -> str:
         width = self._panel_width(width)
         label = f"-- {self._clip(title, max(1, width - 7))} "
-        return "+" + label[: width - 2].ljust(width - 2, "-") + "+"
+        return "+" + _pad_display(label, width - 2, fill="-") + "+"
 
     def _card_edge(self, width: int) -> str:
         width = self._panel_width(width)
@@ -376,23 +387,17 @@ class HarnessCoderTui:
     def _card_body(self, text: str, width: int) -> str:
         width = self._panel_width(width)
         inner_width = max(1, width - 4)
-        return f"| {self._clip(text, inner_width).ljust(inner_width)} |"
+        return f"| {_pad_display(text, inner_width)} |"
 
     def _panel_width(self, width: int) -> int:
         return max(4, width)
 
     def _clip(self, text: str, width: int) -> str:
-        if width <= 0:
-            return ""
-        if len(text) <= width:
-            return text
-        if width <= 1:
-            return text[:width]
-        return text[: width - 1] + "..."
+        return _clip_display(text, width)
 
     def _compact_path(self, path: Path, width: int) -> str:
         text = str(path)
-        if len(text) <= width:
+        if _display_width(text) <= width:
             return text
         name = path.name or text
         parent = path.parent.name
@@ -417,10 +422,10 @@ class HarnessCoderTui:
             pass
 
     def _start_user_message(self, line: str) -> None:
-        if self._active_run is not None:
-            self.messages.append(
-                Message("error", "Agent is still running. Wait for it to finish.")
-            )
+        decision = self._control.start_run(active_run=self._active_run is not None)
+        if not decision.allowed:
+            self.status = decision.status
+            self.messages.append(Message("error", decision.message))
             return
 
         self.messages.append(Message("user", line))
@@ -512,6 +517,7 @@ class HarnessCoderTui:
             openai_base_url=self.config.openai_base_url,
             openai_model=self.config.openai_model,
             openai_api_key_env=self.config.openai_api_key_env,
+            reasoning_effort=self.config.reasoning_effort,
             max_iterations=self.config.max_iterations,
             context_mode=self.config.context_mode,
             repo_map_mode=self.config.repo_map_mode,
@@ -550,15 +556,12 @@ class HarnessCoderTui:
         return self.status
 
     def _request_exit(self) -> bool:
-        if self._active_run is None:
+        decision = self._control.request_exit(active_run=self._active_run is not None)
+        if decision.allowed:
             return True
-        message = (
-            "Agent is still running. Wait for it to finish before exiting. "
-            "Cancellation is not implemented yet."
-        )
-        self.status = "exit blocked: active run"
-        if not self.messages or self.messages[-1].text != message:
-            self.messages.append(Message("error", message))
+        self.status = decision.status
+        if not self.messages or self.messages[-1].text != decision.message:
+            self.messages.append(Message("error", decision.message))
         return False
 
     def _handle_slash_command(self, line: str, screen: curses.window) -> None:
@@ -574,15 +577,13 @@ class HarnessCoderTui:
         command = parts[0][1:]
         args = parts[1:]
 
-        if self._active_run is not None and command not in ACTIVE_RUN_ALLOWED_COMMANDS:
-            self.messages.append(
-                Message(
-                    "error",
-                    f"/{command} is blocked while the agent is running. "
-                    "Allowed commands: /help, /status, /trace.",
-                )
-            )
-            self.status = f"/{command} blocked: active run"
+        decision = self._control.slash_command(
+            command=command,
+            active_run=self._active_run is not None,
+        )
+        if not decision.allowed:
+            self.messages.append(Message("error", decision.message))
+            self.status = decision.status
             return
 
         handlers = {
@@ -592,6 +593,7 @@ class HarnessCoderTui:
             "provider": self._cmd_provider,
             "model": self._cmd_model,
             "base-url": self._cmd_base_url,
+            "reasoning": self._cmd_reasoning,
             "cwd": self._cmd_cwd,
             "max-iterations": self._cmd_max_iterations,
             "tools": self._cmd_tools,
@@ -630,6 +632,7 @@ class HarnessCoderTui:
                         "/provider [scripted|hc-bench-oracle|openai-codex|openai-chat] - show or change provider",
                         "/model [name|scripted] - show or change model",
                         "/base-url [url] - show or change OpenAI-compatible base URL",
+                        "/reasoning [none|minimal|low|medium|high|xhigh|reset] - show or change Codex reasoning effort",
                         "/cwd [path] - show or change repository cwd",
                         "/max-iterations [n] - show or change loop limit",
                         "/tools - list direct slash tools",
@@ -656,6 +659,7 @@ class HarnessCoderTui:
                         f"provider: {self.config.provider}",
                         f"model: {self.config.openai_model or '-'}",
                         f"base_url: {self.config.openai_base_url}",
+                        f"reasoning_effort: {self.config.reasoning_effort or '-'}",
                         f"max_iterations: {self.config.max_iterations}",
                         f"context_mode: {self.config.context_mode}",
                         f"repo_map_mode: {self.config.repo_map_mode}",
@@ -712,6 +716,28 @@ class HarnessCoderTui:
             return
         self.config.openai_base_url = args[0]
         self.messages.append(Message("system", f"base_url set to {args[0]}"))
+
+    def _cmd_reasoning(self, args: list[str], _line: str) -> None:
+        if not args:
+            self.messages.append(
+                Message("system", f"reasoning_effort: {self.config.reasoning_effort or '-'}")
+            )
+            return
+        effort = args[0].strip().lower()
+        if effort == "reset":
+            self.config.reasoning_effort = None
+            self.messages.append(Message("system", "reasoning_effort reset"))
+            return
+        if effort not in REASONING_EFFORT_CHOICES:
+            self.messages.append(
+                Message(
+                    "error",
+                    "Reasoning effort must be none, minimal, low, medium, high, xhigh, or reset.",
+                )
+            )
+            return
+        self.config.reasoning_effort = effort
+        self.messages.append(Message("system", f"reasoning_effort set to {effort}"))
 
     def _cmd_cwd(self, args: list[str], _line: str) -> None:
         if not args:
@@ -993,12 +1019,85 @@ class HarnessCoderTui:
             if config.provider == "openai-codex"
             else OpenAIChatModel
         )
+        if config.provider == "openai-chat":
+            return model_cls(
+                api_key=api_key,
+                base_url=config.openai_base_url,
+                model=config.openai_model,
+            )
         return model_cls(
             api_key=api_key,
             base_url=config.openai_base_url,
             model=config.openai_model,
+            reasoning_effort=config.reasoning_effort,
         )
 
 
 def run_tui(config: TuiConfig, initial_message: str | None = None) -> int:
     return HarnessCoderTui(config, initial_message).run()
+
+
+def _wrap_display_lines(text: str, width: int) -> list[str]:
+    if width <= 0:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    current_width = 0
+    for char in text:
+        char_width = _char_display_width(char)
+        if current and current_width + char_width > width:
+            lines.append(current)
+            current = ""
+            current_width = 0
+        if char_width > width:
+            lines.append(_clip_display(char, width))
+            continue
+        current += char
+        current_width += char_width
+    lines.append(current)
+    return lines or [""]
+
+
+def _clip_display(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if _display_width(text) <= width:
+        return text
+    if width <= 1:
+        return _take_display(text, width)
+    return _take_display(text, width - 1) + "."
+
+
+def _pad_display(text: str, width: int, fill: str = " ") -> str:
+    clipped = _clip_display(text, width)
+    padding = max(0, width - _display_width(clipped))
+    return clipped + (fill * padding)
+
+
+def _take_display(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    result = ""
+    used = 0
+    for char in text:
+        char_width = _char_display_width(char)
+        if used + char_width > width:
+            break
+        result += char
+        used += char_width
+    return result
+
+
+def _display_width(text: str) -> int:
+    return sum(_char_display_width(char) for char in text)
+
+
+def _char_display_width(char: str) -> int:
+    if not char:
+        return 0
+    category = unicodedata.category(char)
+    if category in {"Mn", "Me", "Cf"}:
+        return 0
+    if unicodedata.east_asian_width(char) in {"F", "W"}:
+        return 2
+    return 1

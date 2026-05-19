@@ -91,6 +91,39 @@ The trace is the foundation for replay, checkpoint/resume, eval scoring, and
 failure analysis. It turns agent behavior from an opaque conversation into a
 structured execution log.
 
+### 3.1. Small Control Plane Instead Of Multi-Platform Gateway
+
+Problem:
+Hermes-style Gateway architecture has a useful lesson: user entrypoints and
+agent runtime should be separated. But copying the product shape would send HC
+in the wrong direction. HarnessCoder does not need Telegram, Discord, email, or
+web gateways before the local runtime is reliable.
+
+Decision:
+Keep the entrypoints local:
+
+```text
+CLI / TUI / Eval
+-> run control
+-> runner
+-> trace/checkpoint
+-> replay/eval report
+```
+
+The first runtime control slice is `harnesscoder/core/control.py`. It centralizes
+active-run rules that apply across entrypoints:
+
+- do not start a second run while one run is active;
+- do not exit during an active run until cancellation is implemented;
+- while a run is active, only allow read-only commands such as `/help`,
+  `/status`, and `/trace`.
+
+Interview angle:
+This keeps HC's identity as a reliability runtime, not a platform gateway. The
+control plane is about run lifecycle, status, trace inspection, interrupt,
+resume, approval, and active-run protection. UI code should render those
+decisions, while trace/checkpoint/replay remain the source of truth.
+
 ## Runtime And Tooling Issues
 
 ### 4. Empty Skeleton, No Git Repo
@@ -989,9 +1022,38 @@ This keeps the harness honest. Direct provider support makes model failures,
 prompt failures, and tool-loop failures easier to separate than a hidden gateway
 translation layer.
 
+### 43. Codex Reasoning Effort Is A Runtime Setting
+
+Problem:
+When comparing Codex-style profiles, `high` versus `xhigh` reasoning should be a
+runtime-controlled variable, not a remembered CLI detail. Hermes handles this
+well: config/commands are normalized first, then the Codex transport translates
+the value into the provider-specific Responses payload.
+
+Decision:
+Add `reasoning_effort` for `openai-codex` only. The supported values are
+`none`, `minimal`, `low`, `medium`, `high`, and `xhigh`; `minimal` is sent as
+`low` for Responses API compatibility. The value can come from
+`--reasoning-effort`, `HARNESSCODER_REASONING_EFFORT`, `models.toml`, or the TUI
+`/reasoning` command. `openai-chat` rejects profile-level reasoning config and
+does not send a reasoning field, which keeps DeepSeek's Chat Completions path
+clean.
+
+Trace/eval effect:
+`run_started.model_metadata` records the provider, model, configured
+`reasoning_effort`, and effective Responses effort without API keys. Replay
+surfaces `model_metadata`, and the eval matrix summary includes a `Reasoning`
+column so high/xhigh runs can be compared without guessing from command history.
+
+Interview angle:
+This is a small but real runtime-control feature. The model does not decide its
+own reasoning level; the runtime receives a profile/CLI/TUI setting, validates
+it, applies provider-specific translation, and records it in trace for later
+attribution.
+
 ## 0.9.0 Milestone
 
-### 43. RepoMap Makes Repository Context A Governed Input
+### 44. RepoMap Makes Repository Context A Governed Input
 
 Problem:
 Search and bounded reads are useful, but larger repositories still need a
@@ -1024,7 +1086,7 @@ sooner, used fewer broad reads, or changed tool behavior under an ablation.
 
 ## 0.9.1 Milestone
 
-### 44. Showcase Docs Turn Eval Evidence Into An Interview Story
+### 45. Showcase Docs Turn Eval Evidence Into An Interview Story
 
 Problem:
 The runtime and benchmark evidence existed, but an interviewer should not need
@@ -1053,7 +1115,7 @@ recoverable, and optimizable, rather than a loose pile of features.
 
 ## 1.0.0 Milestone
 
-### 45. Interview Release Means Reproducible Evidence And Public Hygiene
+### 46. Interview Release Means Reproducible Evidence And Public Hygiene
 
 Problem:
 A project can have strong internal evidence and still fail as a portfolio
@@ -1075,3 +1137,38 @@ model and endpoint placeholders.
 Interview angle:
 1.0 is not a bigger feature set. It is a clean release boundary: reproducible,
 auditable, benchmarked, and safe to show.
+
+## 1.2.1 Milestone
+
+### 47. HC-Bench-40 Expands Heldout Coverage Without Polluting Train Data
+
+Problem:
+HC-Bench-20 was useful as a compact interview benchmark, but real-model results
+quickly showed that 20 cases are too small to stress different failure modes.
+At the same time, HC-Train-40 already exists as a training trace pool, so simply
+renaming it as a benchmark would destroy the train/eval boundary.
+
+Decision:
+Add `eval/hc_bench_40.json` and `harnesscoder/data/hc_bench_40_oracle.json`.
+The suite keeps all HC-Bench-20 cases for backward-compatible comparison and
+adds 20 new heldout cases with `split=heldout` and
+`source=synthetic-microbenchmark`. The new cases are inspired by public
+benchmark patterns rather than copied from them:
+
+- TRAJECT-Bench's lesson: evaluate the tool trajectory, not only final output.
+- ProgramBench-style lesson: include harder programming and parser edge cases
+  where the agent must infer behavior from tests.
+- SWE-style lesson: keep repo fixture isolation, tests, and verifier contracts as
+  the evidence boundary.
+
+The added coverage includes algorithm/programming repairs, recovery cases that
+require a failed test and a second patch, greenfield helper modules, large-file
+context lookup tasks, and policy/security cases. The deterministic oracle covers
+all 40 cases so harness, policy, trace, replay, and report behavior can be
+validated before comparing live models.
+
+Interview angle:
+This is the right way to answer "can you expand the benchmark?" The answer is
+not "add more toy questions"; it is "preserve the split, add distinct failure
+modes, keep oracle solvability, and make the new suite measurable through the
+same trace-backed report pipeline."

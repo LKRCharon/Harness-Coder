@@ -96,6 +96,78 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertEqual(context.context_injected, True)
         self.assertGreater(context.estimated_tokens, 0)
 
+    def test_openai_codex_payload_uses_reasoning_effort(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        model = OpenAICodexModel(
+            api_key="sk-test",
+            model="codex-test",
+            base_url="https://example.test/v1",
+            reasoning_effort="high",
+        )
+
+        payload = model._build_payload(state)
+        metadata = model.model_metadata()
+
+        self.assertEqual(payload["reasoning"], {"effort": "high", "summary": "auto"})
+        self.assertEqual(metadata["reasoning_effort"], "high")
+        self.assertEqual(metadata["effective_reasoning_effort"], "high")
+
+    def test_openai_codex_minimal_reasoning_clamps_to_low(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        model = OpenAICodexModel(
+            api_key="sk-test",
+            model="codex-test",
+            base_url="https://example.test/v1",
+            reasoning_effort="minimal",
+        )
+
+        payload = model._build_payload(state)
+        metadata = model.model_metadata()
+
+        self.assertEqual(payload["reasoning"], {"effort": "low", "summary": "auto"})
+        self.assertEqual(metadata["reasoning_effort"], "minimal")
+        self.assertEqual(metadata["effective_reasoning_effort"], "low")
+
+    def test_openai_codex_none_reasoning_omits_reasoning_payload(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        model = OpenAICodexModel(
+            api_key="sk-test",
+            model="codex-test",
+            base_url="https://example.test/v1",
+            reasoning_effort="none",
+        )
+
+        payload = model._build_payload(state)
+        metadata = model.model_metadata()
+
+        self.assertNotIn("reasoning", payload)
+        self.assertEqual(metadata["reasoning_effort"], "none")
+        self.assertNotIn("effective_reasoning_effort", metadata)
+
+    def test_openai_codex_rejects_unknown_reasoning_effort(self) -> None:
+        with self.assertRaises(ValueError):
+            OpenAICodexModel(
+                api_key="sk-test",
+                model="codex-test",
+                base_url="https://example.test/v1",
+                reasoning_effort="turbo",
+            )
+
     def test_memory_context_renders_working_memory(self) -> None:
         state = AgentState(
             run_id="run_test",
@@ -224,6 +296,7 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
 
         self.assertEqual(payload["model"], "deepseek-v4-pro")
         self.assertIn("messages", payload)
+        self.assertNotIn("reasoning", payload)
         self.assertNotIn("input", payload)
         self.assertEqual(payload["stream"], False)
         self.assertIn("packed_context", payload["messages"][1]["content"])

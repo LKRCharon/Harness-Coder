@@ -28,12 +28,12 @@ DAG 或工作流框架可以用来组织 agent 外围的 eval pipeline，但 age
 
 ## 当前状态
 
-版本 `1.2.0` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
-greenfield eval loop、HC-Bench-20、trace replay、eval report、model profile
+版本 `1.2.1` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
+greenfield eval loop、HC-Bench-20/40、trace replay、eval report、model profile
 矩阵对比、上下文治理 prompt assembly、任务内 memory、compression metrics、
 轻量 RepoMap、checkpoint/resume，以及用于审计和回放的大工具输出 artifact
 存储。它也把训练 trace 收集和 live eval 区分开来：HC-Train-40 用于训练池，
-HC-Bench-20 用于当前 heldout/control 评测。
+HC-Bench-20/40 用于 heldout/control 评测。
 
 当前包含：
 
@@ -61,8 +61,11 @@ HC-Bench-20 用于当前 heldout/control 评测。
 - greenfield eval：从几乎空的 fixture 开始，由 agent 创建源码和测试。
 - case 级别的 `allowed_tools`、`step_budget`、`verifier` 字段，避免评测约束只藏在文字里。
 - model profiles 和 Markdown eval matrix，用同一组 case 对比不同 provider。
-- HC-Bench-20：20 个 fixture-backed case，覆盖 bugfix、recovery、greenfield、
-  context-governance 和 policy/safety。
+- HC-Bench-20：原始 20 题 fixture-backed 成绩单，覆盖 bugfix、recovery、
+  greenfield、context-governance 和 policy/safety。
+- HC-Bench-40：更难的 heldout 成绩单，保留 HC-Bench-20 的可比性，并新增
+  ProgramBench-style 编程修复、parser recovery、更丰富的 greenfield、大上下文
+  定位和 policy/security case。
 - HC-Train-40：40 个 fixture-backed 训练 case，用于 teacher/current-policy trace
   收集，并显式标注 `split=train` 和 `source=synthetic-microbenchmark`。
 - `hc-bench-oracle` deterministic provider：先证明 benchmark 和 report pipeline
@@ -76,6 +79,7 @@ python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
 python -m harnesscoder --eval eval/cases.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json
+python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_40.json
 ```
 
 当前 scripted model 会做一个小型 repo orientation：搜索项目相关信息、读取
@@ -111,6 +115,11 @@ python -m harnesscoder --tui
 
 当前 TUI 定位很小：它只是 runtime 和 eval harness 的本地控制台，不是完整的
 Claude Code clone。
+
+这个控制台现在通过一个小型 runtime control plane 做运行控制，而不是把逻辑
+散落在 TUI 分支里。active run 期间会阻止会改变状态的命令，只保留 `/help`、
+`/status`、`/trace` 这类只读控制。HC 借鉴 Hermes 的入口/runtime 分层，而不
+复制它的多平台 Gateway 形态。
 
 ## 上下文治理
 
@@ -157,6 +166,20 @@ export HARNESSCODER_OPENAI_MODEL="your-codex-model-name"
 
 python -m harnesscoder --provider openai-codex "看一下这个 repo 是做什么的"
 ```
+
+Codex Responses profile 可以通过 `--reasoning-effort` 或 `models.toml` 里的
+`reasoning_effort` 设置 runtime 推理强度：
+
+```bash
+python -m harnesscoder \
+  --provider openai-codex \
+  --reasoning-effort high \
+  "fix the failing test"
+```
+
+合法值是 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`。HarnessCoder 会把
+配置值和实际发送值记录到 `run_started` 的 trace metadata，方便 eval matrix
+对比 high/xhigh。DeepSeek 这类 Chat Completions profile 不会收到这个字段。
 
 如果 base URL 没有以 `/v1` 结尾，HarnessCoder 会先补 `/v1`，再调用
 `/responses` 或 `/chat/completions`。
@@ -222,7 +245,9 @@ CLI 从仓库启动时，会自动加载当前目录和 `--cwd` 目录下的 `.e
 [docs/spec-1.0.1.md](docs/spec-1.0.1.md)、
 [docs/spec-1.0.2.md](docs/spec-1.0.2.md)、
 [docs/spec-1.1.0.md](docs/spec-1.1.0.md) 和
-[docs/spec-1.2.0.md](docs/spec-1.2.0.md)。1.1 的 prompt caching 背景总结见
+[docs/spec-1.2.0.md](docs/spec-1.2.0.md)；1.2.1 的 HC-Bench-40、run-control
+和 reasoning-strength 范围见
+[docs/spec-1.2.1.md](docs/spec-1.2.1.md)。1.1 的 prompt caching 背景总结见
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md)。
 
 ## Replay And Eval
@@ -380,6 +405,28 @@ oracle 不是在证明模型智能，而是在证明 harness 自己稳定：fixt
 policy gates、trace metrics、verifier 和 category-level report 都能跑通。真实
 provider 可以通过 `--model-profiles` 在同一套 suite 上对比。
 
+生成并运行更难的 heldout HC-Bench-40：
+
+```bash
+python scripts/generate_hc_bench_40.py
+
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_40.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-40-oracle.md
+```
+
+HC-Bench-40 保留 HC-Bench-20 原题，方便历史结果继续可比，同时新增 20 个更难的
+heldout case：
+
+- 4 个 ProgramBench-style 编程 / 算法修复 case。
+- 3 个 parser / 边界条件 recovery case，需要先看到失败测试，再做第二次修复。
+- 5 个 greenfield 编程任务，需要创建源码和测试。
+- 5 个大上下文定位 case，用于观察 search-first 和 bounded-read 行为。
+- 3 个 policy/security case，覆盖 header redaction、shell-safe argv 构造和
+  网络下载命令被拒后的恢复。
+
 生成并 sanity-check HC-Train-40：
 
 ```bash
@@ -401,8 +448,9 @@ case：
 - 6 个 policy case，覆盖工具拒绝和安全恢复路径。
 - 5 个 greenfield case，通过 `write_file` 创建源码和测试。
 
-用 HC-Train-40 收集 teacher/current-policy traces 做后训练；用 HC-Bench-20，以及
-之后单独的 HC-Heldout suite，做 live model comparison。
+用 HC-Train-40 收集 teacher/current-policy traces 做后训练；用 HC-Bench-20 做
+历史可比结果，用 HC-Bench-40 作为当前更难的 heldout scorecard 做 live model
+comparison。
 
 ## 近期 TODO
 

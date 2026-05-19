@@ -38,7 +38,8 @@ class EvalMatrixTests(unittest.TestCase):
                 'provider = "openai-codex"\n'
                 'model = "gpt-test"\n'
                 'base_url = "https://example.test/v1"\n'
-                'api_key_env = "OPENAI_API_KEY"\n\n'
+                'api_key_env = "OPENAI_API_KEY"\n'
+                'reasoning_effort = "xhigh"\n\n'
                 "[models.deepseek]\n"
                 'provider = "openai-chat"\n'
                 'model = "deepseek-v4-pro"\n'
@@ -54,8 +55,24 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertEqual(profiles["oracle"].provider, "hc-bench-oracle")
         self.assertEqual(profiles["gpt"].provider, "openai-codex")
         self.assertEqual(profiles["gpt"].model, "gpt-test")
+        self.assertEqual(profiles["gpt"].reasoning_effort, "xhigh")
         self.assertEqual(profiles["deepseek"].provider, "openai-chat")
         self.assertEqual(profiles["deepseek"].api_key_env, "DEEPSEEK_API_KEY")
+
+    def test_openai_chat_profile_rejects_reasoning_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "models.toml"
+            config.write_text(
+                "[models.deepseek]\n"
+                'provider = "openai-chat"\n'
+                'model = "deepseek-v4-pro"\n'
+                'api_key_env = "DEEPSEEK_API_KEY"\n'
+                'reasoning_effort = "high"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                load_model_profiles(config)
 
     def test_parse_profile_names_rejects_duplicates(self) -> None:
         self.assertEqual(parse_profile_names("scripted,gpt"), ["scripted", "gpt"])
@@ -143,7 +160,10 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("Artifact integrity", matrix_report)
         self.assertIn("Raw output chars", matrix_report)
         self.assertIn("Output compression", matrix_report)
-        self.assertIn("| demo | scripted | 3 | 33.3% (1/3) | 66.7% (2/3) | 66.7% (2/3) |", matrix_report)
+        self.assertIn(
+            "| demo | scripted | - | 3 | 33.3% (1/3) | 66.7% (2/3) | 66.7% (2/3) |",
+            matrix_report,
+        )
 
     def test_eval_matrix_records_profile_initialization_error(self) -> None:
         matrix = run_eval_matrix(
@@ -178,7 +198,7 @@ class EvalMatrixTests(unittest.TestCase):
         )
         self.assertEqual(
             summary_row.count("|"),
-            "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |".count("|"),
+            "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |".count("|"),
         )
 
     def test_eval_subprocess_redacts_sensitive_environment_output(self) -> None:

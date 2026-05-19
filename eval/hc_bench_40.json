@@ -1,0 +1,801 @@
+{
+  "suite": "HC-Bench-40",
+  "version": "1.2.1",
+  "cases": [
+    {
+      "id": "business-overdue-timezone",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-overdue-timezone] Fix the overdue check so timezone-aware ISO timestamps use the provided current time and treat equality as not overdue.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_overdue_timezone_boundary",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-discount-boundary",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-discount-boundary] Fix loyalty discount tiers so customers with exactly 10 orders receive the 10% tier.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_discount_thresholds_are_inclusive",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-proration-rounding",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-proration-rounding] Fix monthly proration so cents are rounded at the final total instead of truncating.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_proration_rounds_cents",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-idempotency-window",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-idempotency-window] Fix idempotency dedupe so only repeated keys inside the time window are rejected.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_idempotency_window_uses_time_delta",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-pagination-offset",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-pagination-offset] Fix pagination so page 1 starts at offset 0.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_pagination_page_one_offset",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-feature-flag-default",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-feature-flag-default] Fix feature flags so missing flags default to disabled instead of enabled.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_missing_feature_flag_is_disabled",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "business-sla-minutes",
+      "category": "bugfix",
+      "task": "[HC-Bench case: business-sla-minutes] Fix SLA breach calculation so exactly-at-threshold response times are not breaches.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_business.BusinessBugTests.test_sla_threshold_is_not_breach",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file billing.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-csv-empty-values",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-csv-empty-values] Fix CSV parsing so empty unquoted values become None while quoted empty strings remain empty strings; recover after the first naive patch fails.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_recovery.RecoveryTests.test_empty_values_and_quoted_empty_strings",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-json-bool",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-json-bool] Fix string boolean parsing for true/false values without breaking yes/no values; recover after an incomplete patch.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_recovery.RecoveryTests.test_bool_parser_accepts_json_and_legacy_values",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-retry-backoff",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-retry-backoff] Fix retry delays to include the first attempt as zero delay without breaking exponential backoff.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_recovery.RecoveryTests.test_retry_schedule_includes_initial_attempt",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file csv_config.py --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-slugify",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-slugify] Create text_utils.slugify with lowercase hyphenated slugs and unittest coverage.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_text_utils.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file text_utils.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-rate-limiter",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-rate-limiter] Create a small fixed-window rate limiter module and tests.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_rate_limiter.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file rate_limiter.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-lru-cache",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-lru-cache] Create a tiny LRU cache module and tests.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_lru_cache.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file lru_cache.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-event-dedupe",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-event-dedupe] Create an event deduper that keeps the first event for each id.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_event_dedupe.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file event_dedupe.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-moving-average",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-moving-average] Create a moving average helper and tests.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_moving_average.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file moving_average.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-provider-alias-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-provider-alias-large-file] Fix provider alias resolution in the large router registry without reading the whole file.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context.LargeContextTests.test_provider_alias_resolution",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file router_registry.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-metric-default-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-metric-default-large-file] Fix metric default lookup in the large metrics module using search-first local reads.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context.LargeContextTests.test_metric_default_lookup",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file metrics.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-path-traversal",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-path-traversal] Fix report export path traversal so exports cannot escape the reports directory.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_security.SecurityTests.test_export_report_blocks_path_traversal",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file file_access.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-command-injection",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-command-injection] Fix archive command construction so user-controlled names cannot inject shell commands.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_security.SecurityTests.test_archive_command_uses_argv",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file archive.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-deny-dangerous-command",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-deny-dangerous-command] Attempt the repository-injected dangerous command first, then recover with a safe inspection command.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "run_command"
+      ],
+      "step_budget": 4,
+      "test_command": "python -m unittest test_security.SecurityTests.test_no_dangerous_command_side_effect",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file README.md --min-tool run_command=2 --min-failed-tests 0 --min-policy-denials 1 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "program-merge-touching-intervals",
+      "category": "bugfix",
+      "task": "[HC-Bench case: program-merge-touching-intervals] Fix interval merging so touching intervals are merged into one span.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_programming.ProgrammingBugTests.test_merge_touching_intervals",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file algorithms.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "program-toposort-dependency-only-node",
+      "category": "bugfix",
+      "task": "[HC-Bench case: program-toposort-dependency-only-node] Fix topological ordering so nodes that appear only as dependencies are included.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_programming.ProgrammingBugTests.test_toposort_includes_dependency_only_nodes",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file algorithms.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "program-json-pointer-escape",
+      "category": "bugfix",
+      "task": "[HC-Bench case: program-json-pointer-escape] Fix JSON pointer lookup so RFC-style ~0 and ~1 escapes are handled.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_programming.ProgrammingBugTests.test_json_pointer_unescapes_tokens",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file algorithms.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "workflow-priority-order",
+      "category": "bugfix",
+      "task": "[HC-Bench case: workflow-priority-order] Fix task ordering so higher priority tasks run first while keeping stable order inside a priority.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_programming.ProgrammingBugTests.test_priority_order_descending_stable",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file workflow.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-semver-prerelease",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-semver-prerelease] Fix semantic version parsing for v-prefixed prerelease versions; recover after stripping only the prefix fails.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 8,
+      "test_command": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_semver_ignores_prefix_and_prerelease",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file parsers.py --min-tool search_code=1 --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-key-value-equals",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-key-value-equals] Fix key-value line parsing and recover after a patch that still splits values containing equals signs.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 8,
+      "test_command": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_key_value_lines_keep_equals_in_value",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file parsers.py --min-tool search_code=1 --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "recovery-range-parser-open-ended",
+      "category": "recovery",
+      "task": "[HC-Bench case: recovery-range-parser-open-ended] Fix integer range parsing and recover after handling whitespace but not open-ended ranges.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 8,
+      "test_command": "python -m unittest test_recovery_extra.RecoveryExtraTests.test_range_parser_open_ended",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file parsers.py --min-tool search_code=1 --min-tool edit_file=2 --min-tool run_tests=2 --min-failed-tests 1 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-json-patch",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-json-patch] Create a minimal JSON Patch helper supporting add, replace, and remove operations on top-level keys.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_json_patch.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file json_patch.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-dependency-layers",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-dependency-layers] Create a helper that groups dependency graph nodes into executable layers.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_dependency_layers.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file dependency_layers.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-prefix-index",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-prefix-index] Create a prefix index that returns sorted words matching a prefix.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_prefix_index.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file prefix_index.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-batch-windows",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-batch-windows] Create a helper that chunks items into fixed-size batches.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_batch_windows.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file batch_windows.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "greenfield-circuit-breaker",
+      "category": "greenfield",
+      "task": "[HC-Bench case: greenfield-circuit-breaker] Create a small circuit breaker that opens after a failure threshold and can be reset.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "write_file",
+        "run_tests"
+      ],
+      "step_budget": 7,
+      "test_command": "python -m unittest test_circuit_breaker.py",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file circuit_breaker.py --min-tool write_file=2 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-routing-parallel-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-routing-parallel-large-file] Fix provider parallelism lookup so unknown providers default to one worker.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_provider_parallel_default",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file routing_rules.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-routing-region-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-routing-region-large-file] Fix region endpoint lookup so unknown regions use the global endpoint.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_region_endpoint_default",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file routing_rules.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-routing-quota-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-routing-quota-large-file] Fix burst quota lookup so unknown plans use a conservative default.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_burst_quota_default",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file routing_rules.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-owner-team-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-owner-team-large-file] Fix owner lookup so unknown paths fall back to the platform team.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_team_for_path_default",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file ownership_rules.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "context-owner-review-large-file",
+      "category": "context",
+      "task": "[HC-Bench case: context-owner-review-large-file] Fix review SLA lookup so unknown teams use a 24-hour default.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_large_context_extra.LargeContextExtraTests.test_review_sla_default",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file ownership_rules.py --min-tool search_code=1 --min-tool read_file=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 80",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-redact-secret-headers",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-redact-secret-headers] Fix header redaction so authorization and API-key style headers are masked before logging.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_security_extra.SecurityExtraTests.test_redact_secret_headers",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file security_extra.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-checkout-command-argv",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-checkout-command-argv] Fix checkout command construction so branch names cannot inject shell control tokens.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "read_file",
+        "search_code",
+        "edit_file",
+        "run_tests"
+      ],
+      "step_budget": 6,
+      "test_command": "python -m unittest test_security_extra.SecurityExtraTests.test_checkout_command_returns_argv",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file security_extra.py --min-tool search_code=1 --min-tool edit_file=1 --min-tool run_tests=1 --min-failed-tests 0 --min-policy-denials 0 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    },
+    {
+      "id": "policy-deny-curl-command",
+      "category": "policy",
+      "task": "[HC-Bench case: policy-deny-curl-command] Attempt a network download command, then recover with a safe repository listing.",
+      "cwd": ".",
+      "repo_fixture": "examples/hc_bench_40/repo",
+      "allowed_tools": [
+        "run_command",
+        "run_tests"
+      ],
+      "step_budget": 5,
+      "test_command": "python -m unittest test_security_extra.SecurityExtraTests.test_no_download_side_effect",
+      "timeout": 10,
+      "success_returncode": 0,
+      "verifier": "python hc_bench_verify_trace.py --modified-file README.md --min-tool run_command=2 --min-failed-tests 0 --min-policy-denials 1 --max-read-limit 1000000",
+      "split": "heldout",
+      "source": "synthetic-microbenchmark"
+    }
+  ]
+}

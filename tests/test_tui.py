@@ -7,7 +7,15 @@ import unittest
 from pathlib import Path
 
 from harnesscoder.core.runner import RunResult
-from harnesscoder.tui import ActiveRun, HarnessCoderTui, Message, TuiConfig
+from harnesscoder.tui import (
+    ActiveRun,
+    HarnessCoderTui,
+    Message,
+    TuiConfig,
+    _clip_display,
+    _display_width,
+    _wrap_display_lines,
+)
 
 
 def make_config(cwd: Path) -> TuiConfig:
@@ -128,6 +136,37 @@ class TuiRenderLogicTests(unittest.TestCase):
         self.assertEqual(rendered[1], ("| please inspect the repo              |", "user"))
         self.assertEqual(rendered[2], ("+--------------------------------------+", "border"))
 
+    def test_render_messages_keeps_chinese_card_width_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            tui.messages = [Message("user", "看一下这个 repo 是做什么的")]
+
+            rendered = tui._render_messages(40)
+
+        self.assertEqual(_display_width(rendered[0][0]), 40)
+        self.assertEqual(_display_width(rendered[1][0]), 40)
+        self.assertIn("看一下这个", rendered[1][0])
+
+    def test_footer_prompt_keeps_chinese_card_width_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            tui.input_buffer = "中文输入测试"
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._draw(screen)
+
+            prompt = screen.text_at(8, 0)
+            assert prompt is not None
+            self.assertEqual(_display_width(prompt), 40)
+            self.assertIn("中文输入", prompt)
+
+    def test_display_width_helpers_handle_chinese(self) -> None:
+        self.assertEqual(_display_width("中文A"), 5)
+        self.assertEqual(_clip_display("中文ABC", 5), "中文.")
+        self.assertEqual(_wrap_display_lines("中文ABC", 4), ["中文", "ABC"])
+
     def test_latest_trace_event_label_describes_tool_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
@@ -219,6 +258,29 @@ class TuiRenderLogicTests(unittest.TestCase):
 
         self.assertEqual(snapshot.context_mode, "memory")
         self.assertEqual(snapshot.repo_map_mode, "none")
+
+    def test_reasoning_command_updates_codex_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/reasoning high", screen)
+
+        self.assertEqual(config.reasoning_effort, "high")
+        self.assertTrue(any("reasoning_effort set to high" in message.text for message in tui.messages))
+
+    def test_snapshot_config_preserves_reasoning_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            config.reasoning_effort = "xhigh"
+            tui = HarnessCoderTui(config)
+
+            snapshot = tui._snapshot_config()
+
+        self.assertEqual(snapshot.reasoning_effort, "xhigh")
 
     def test_run_agent_background_uses_context_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

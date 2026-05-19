@@ -30,12 +30,12 @@ policy-gated loop.
 
 ## Current Status
 
-Version `1.2.0` is a runnable local runtime with real bugfix and minimal
-greenfield eval loops, HC-Bench-20, trace replay, eval reporting,
+Version `1.2.1` is a runnable local runtime with real bugfix and minimal
+greenfield eval loops, HC-Bench-20/40, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
 large-output artifact store for audit/replay. It also separates training trace
-collection from live evaluation through HC-Train-40 and HC-Bench-20. It
+collection from live evaluation through HC-Train-40 and HC-Bench-20/40. It
 includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
@@ -66,8 +66,11 @@ includes:
   benchmark harnesses such as Pico.
 - Model profiles and Markdown eval matrices for comparing the same cases across
   providers.
-- HC-Bench-20: 20 fixture-backed cases across bugfix, recovery, greenfield,
-  context-governance, and policy/safety categories.
+- HC-Bench-20: the original 20-case fixture-backed scorecard across bugfix,
+  recovery, greenfield, context-governance, and policy/safety categories.
+- HC-Bench-40: a harder heldout scorecard that keeps HC-Bench-20 comparable and
+  adds ProgramBench-style programming repairs, parser recovery, richer
+  greenfield tasks, large-context lookup tasks, and policy/security cases.
 - HC-Train-40: 40 fixture-backed training cases for teacher/current-policy trace
   collection, with explicit `split=train` and `source=synthetic-microbenchmark`
   metadata.
@@ -81,6 +84,7 @@ python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
 python -m harnesscoder --eval eval/cases.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json
+python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_40.json
 ```
 
 The scripted model currently performs a small repo-orientation pass: search for
@@ -117,6 +121,12 @@ commands for direct tools and runtime controls:
 
 The current TUI is intentionally small: it is a runnable control surface for the
 runtime and eval harness, not a full Claude Code clone.
+
+The control surface now goes through a small runtime control plane rather than
+one-off TUI branches. During an active run, mutating commands are blocked and
+only read-only controls such as `/help`, `/status`, and `/trace` remain
+available. The project borrows Hermes' entrypoint/runtime layering lesson, not
+its multi-platform Gateway shape.
 
 ## Context Governance
 
@@ -167,6 +177,21 @@ export HARNESSCODER_OPENAI_MODEL="your-codex-model-name"
 
 python -m harnesscoder --provider openai-codex "看一下这个 repo 是做什么的"
 ```
+
+For Codex Responses profiles, you can set runtime reasoning strength with
+`--reasoning-effort` or `reasoning_effort` in `models.toml`:
+
+```bash
+python -m harnesscoder \
+  --provider openai-codex \
+  --reasoning-effort high \
+  "fix the failing test"
+```
+
+Valid values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
+HarnessCoder records the configured and effective reasoning effort in the
+`run_started` trace metadata so eval matrices can compare high/xhigh runs. Chat
+Completions profiles such as DeepSeek do not receive this field.
 
 If the base URL does not end in `/v1`, HarnessCoder appends `/v1` before calling
 `/responses` or `/chat/completions`.
@@ -235,7 +260,9 @@ is scoped in [docs/spec-1.0.1.md](docs/spec-1.0.1.md), the 1.0.2 observation
 artifact store is scoped in [docs/spec-1.0.2.md](docs/spec-1.0.2.md), and the
 1.1.0 prompt cache governance work is scoped in
 [docs/spec-1.1.0.md](docs/spec-1.1.0.md). The 1.2.0 train/heldout benchmark
-split is scoped in [docs/spec-1.2.0.md](docs/spec-1.2.0.md). The Claude Code
+split is scoped in [docs/spec-1.2.0.md](docs/spec-1.2.0.md), and the 1.2.1
+HC-Bench-40 / run-control / reasoning-strength release is scoped in
+[docs/spec-1.2.1.md](docs/spec-1.2.1.md). The Claude Code
 prompt caching note that motivated 1.1 is summarized in
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md).
 
@@ -399,6 +426,29 @@ the harness itself: fixture isolation, policy gates, trace metrics, verifiers,
 and category-level reports. Real providers can be compared against the same
 suite through `--model-profiles`.
 
+Generate and run the harder heldout HC-Bench-40 suite:
+
+```bash
+python scripts/generate_hc_bench_40.py
+
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_40.json \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-40-oracle.md
+```
+
+HC-Bench-40 keeps the HC-Bench-20 cases intact for historical comparison and
+adds 20 harder heldout cases:
+
+- 4 ProgramBench-style programming/algorithm repairs.
+- 3 recovery cases for parser and edge-case fixes that require a failed test and
+  a second patch.
+- 5 greenfield programming tasks that create source plus tests.
+- 5 large-context lookup cases that measure search-first, bounded-read behavior.
+- 3 policy/security cases for redaction, shell-safe argv construction, and
+  denied network download recovery.
+
 Generate and sanity-check HC-Train-40:
 
 ```bash
@@ -421,7 +471,8 @@ synthetic microbenchmark cases:
 - 5 greenfield cases that create source plus tests through `write_file`.
 
 Use HC-Train-40 to collect teacher/current-policy traces for post-training. Use
-HC-Bench-20, and later a separate HC-Heldout suite, for live model comparison.
+HC-Bench-20 for backward-compatible comparisons and HC-Bench-40 as the current
+harder heldout scorecard for live model comparison.
 
 Near-term TODOs:
 

@@ -588,8 +588,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -602,12 +602,14 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     [
                         _md_cell(profile_result.profile_name),
                         _md_cell(profile_result.provider),
+                        "-",
                         str(planned_total),
                         "n/a",
                         "n/a",
                         "n/a",
                         "n/a",
                         "n/a",
+                        "0",
                         "0",
                         "0",
                         "0",
@@ -651,6 +653,7 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 [
                     _md_cell(profile_result.profile_name),
                     _md_cell(profile_result.provider),
+                    _md_cell(_reasoning_label(results)),
                     str(total),
                     _format_rate(passed, total),
                     _format_rate(agent_successes, total),
@@ -1252,6 +1255,26 @@ def _failure_category_from_summary(summary: dict[str, Any]) -> str:
         if isinstance(category, str) and category:
             return category
     return "incomplete"
+
+
+def _reasoning_label(results: list[EvalResult]) -> str:
+    labels: list[str] = []
+    for result in results:
+        metadata = result.trace_summary.get("model_metadata")
+        if not isinstance(metadata, dict):
+            continue
+        configured = metadata.get("reasoning_effort")
+        effective = metadata.get("effective_reasoning_effort")
+        if not isinstance(configured, str) or not configured:
+            continue
+        label = configured
+        if isinstance(effective, str) and effective and effective != configured:
+            label = f"{configured}->{effective}"
+        if label not in labels:
+            labels.append(label)
+    if not labels:
+        return "-"
+    return ", ".join(labels)
 
 
 def _category_summary(results: list[EvalResult]) -> dict[str, list[EvalResult]]:

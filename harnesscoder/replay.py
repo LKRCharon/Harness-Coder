@@ -73,6 +73,7 @@ def summarize_trace(path: str | Path) -> JsonRecord:
         "task": state.get("task") or run_started.get("task"),
         "cwd": state.get("cwd") or run_started.get("cwd"),
         "model": run_started.get("model"),
+        "model_metadata": run_started.get("model_metadata") or {},
         "iterations": state.get("iterations"),
         "max_iterations": state.get("max_iterations")
         or run_started.get("max_iterations"),

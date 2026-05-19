@@ -25,6 +25,10 @@ HarnessCoder 的路线只围绕一个核心判断：
 - 为每轮模型 prompt 记录 fingerprint、stable-prefix token 估算和 cache-break 指标。
 - 增加 HC-Train-40 作为训练 trace 池，并显式标注 split/source。
 - 保持 HC-Bench-20 独立，作为当前 heldout-like control suite。
+- 增加 HC-Bench-40 作为更难的 heldout scorecard，在不混入 train case 的前提下
+  扩展原 20 题。
+- 为 CLI/TUI/eval 的运行控制决策保留一个小型 runtime control plane 边界，
+  先覆盖 active-run 保护和只读 `/status` / `/trace` 类命令。
 
 ### 1.2.x 打磨重点
 
@@ -37,7 +41,35 @@ HarnessCoder 的路线只围绕一个核心判断：
 - 随着指标增多，保持 matrix report 仍然能读。
 - 保留 deterministic baseline，把模型波动和 harness 回归分开。
 - 保持 prompt / tool ordering 确定，并在报告里暴露 stable-prefix 变化。
-- 保持 HC-Train-40 和 HC-Bench-20 的 case id 不重合，避免训练数据收集和最终评测混在一起。
+- 保持 HC-Train-40、HC-Bench-20、HC-Bench-40 的 split metadata 清楚，避免训练
+  trace 收集和最终评测证据混在一起。
+- 把 `/status`、`/trace`、中断/取消、恢复、approval、active-run 保护逐步
+  收敛到共享 runtime control 语义里，而不是散落在 UI 分支中。
+- 用 HC-Bench-40 做更难的 heldout 对比，同时保留 HC-Bench-20 作为历史可比的
+  release/evidence baseline。
+
+### Control Plane 边界
+
+Hermes 的 Gateway 设计对 HC 的启发是分层，不是产品形态。HarnessCoder 近期
+不做 Telegram、Discord、Email 或 Web gateway。它的本地入口已经够了：
+
+```text
+CLI / TUI / Eval
+-> run control
+-> runner
+-> trace/checkpoint
+-> replay/eval report
+```
+
+run-control 层应该回答这些问题：
+
+- 当前是否已有 active run？
+- 运行中哪些命令仍然安全？
+- 中断、恢复、approval 应该如何被表达和审计？
+- UI 能展示哪些 status/trace 信息，而不让 UI 状态变成隐藏真相？
+
+最终事实仍然是 run trace、checkpoint、replay summary、eval report 和
+`RunResult`；control plane 只负责协调入口如何进入 runtime。
 
 ## 1.3.0：只读 Reviewer / Explorer Subagent
 
@@ -69,7 +101,8 @@ agent 平台。
 
 这些方向可以之后再做，但必须由 benchmark case 和 replay evidence 推动：
 
-- HC-Heldout-30：永远不进训练的最终评测集。
+- HC-Bench-40 之后继续扩更大 heldout suite，但前提是新增 case 真的带来不同的
+  failure mode 或语言/runtime 覆盖。
 - 更接近真实仓库的任务和 targeted verifier。
 - 更系统地比较 `none`、`pack`、`memory`、RepoMap 等上下文模式。
 - 更好的 replay 查看方式，用来检查 model action、tool result、artifact 和 verifier outcome。

@@ -29,6 +29,10 @@ work:
   for every model-step prompt.
 - HC-Train-40 as a training trace pool with explicit split/source metadata.
 - HC-Bench-20 kept separate as the current heldout-like control suite.
+- HC-Bench-40 as the harder heldout scorecard, extending the 20-case suite
+  without mixing in train cases.
+- A small runtime control plane boundary for CLI/TUI/eval run-control decisions
+  such as active-run protection and read-only status/trace commands.
 
 ### 1.2.x Quality Work
 
@@ -45,8 +49,40 @@ new product surfaces:
 - Preserve deterministic baselines so model changes can be separated from
   harness regressions.
 - Keep prompt/tool ordering deterministic and report stable-prefix changes.
-- Keep HC-Train-40 and HC-Bench-20 ids disjoint so training trace collection and
-  final eval evidence do not collapse into one dataset.
+- Keep HC-Train-40, HC-Bench-20, and HC-Bench-40 split metadata explicit so
+  training trace collection and final eval evidence do not collapse into one
+  dataset.
+- Move `/status`, `/trace`, interrupt/cancel, resume, approval, and active-run
+  protection into shared runtime control semantics instead of leaving them as
+  scattered UI branches.
+- Use HC-Bench-40 for harder heldout comparisons while keeping HC-Bench-20 as a
+  backward-compatible release/evidence baseline.
+
+### Control Plane Boundary
+
+Hermes' Gateway design is useful as a layering lesson, not as a product target.
+HarnessCoder should not add Telegram, Discord, email, or web gateways. Its local
+entrypoints are enough:
+
+```text
+CLI / TUI / Eval
+-> run control
+-> runner
+-> trace/checkpoint
+-> replay/eval report
+```
+
+The run-control layer should answer questions such as:
+
+- Is there already an active run?
+- Which commands are safe while a run is active?
+- How should interrupt, resume, and approval be represented?
+- Which status and trace facts can the UI show without becoming the source of
+  truth?
+
+The final truth remains the run trace, checkpoint, replay summary, eval report,
+and `RunResult`; the control plane only coordinates how entrypoints interact
+with that runtime.
 
 ## 1.3.0: Read-Only Reviewer / Explorer Subagent
 
@@ -80,7 +116,8 @@ Non-goals:
 These are possible after 1.2, but only if backed by benchmark cases and replay
 evidence:
 
-- HC-Heldout-30 as a never-train final eval set.
+- Larger heldout suites beyond HC-Bench-40, but only when the new cases add
+  distinct failure modes or language/runtime coverage.
 - More realistic repo tasks with targeted verifiers.
 - Stronger context ablations across `none`, `pack`, `memory`, and RepoMap modes.
 - Better replay UX for inspecting model actions, tool results, artifacts, and

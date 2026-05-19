@@ -75,6 +75,7 @@ class AgentRunner:
             task=task,
             cwd=str(self.cwd),
             model=getattr(self.model, "name", type(self.model).__name__),
+            model_metadata=self._model_metadata(),
             max_iterations=self.max_iterations,
             context_mode=self.context_mode,
             repo_map_max_tokens=self.repo_map_max_tokens,
@@ -404,6 +405,16 @@ class AgentRunner:
             for tool_name in MODEL_TOOL_NAMES
             if tool_name in self.policy.allowed_tools
         ]
+
+    def _model_metadata(self) -> dict[str, object]:
+        metadata_provider = getattr(self.model, "model_metadata", None)
+        if callable(metadata_provider):
+            metadata = metadata_provider()
+            if isinstance(metadata, dict):
+                return dict(metadata)
+        return {
+            "provider": getattr(self.model, "name", type(self.model).__name__),
+        }
 
     def _prompt_cache_trace_fields(self, context: object) -> dict[str, object]:
         fingerprint = getattr(context, "prompt_fingerprint", {})

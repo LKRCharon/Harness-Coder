@@ -11,6 +11,7 @@ from harnesscoder.core.models import (
     ModelAdapter,
     OpenAIChatModel,
     OpenAICodexModel,
+    REASONING_EFFORT_CHOICES,
     ScriptedModel,
 )
 from harnesscoder.core.runner import AgentRunner
@@ -128,6 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="OPENAI_API_KEY",
         help="Environment variable that stores the API key.",
     )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=REASONING_EFFORT_CHOICES,
+        default=os.environ.get("HARNESSCODER_REASONING_EFFORT"),
+        help=(
+            "Codex Responses reasoning effort for --provider openai-codex: "
+            "none, minimal, low, medium, high, or xhigh."
+        ),
+    )
     return parser
 
 
@@ -237,6 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 openai_base_url=args.openai_base_url,
                 openai_model=args.openai_model,
                 openai_api_key_env=args.openai_api_key_env,
+                reasoning_effort=args.reasoning_effort,
                 max_iterations=args.max_iterations,
                 context_mode=args.context_mode,
                 repo_map_mode=args.repo_map_mode,
@@ -291,10 +302,17 @@ def build_model(args: argparse.Namespace) -> ModelAdapter:
         )
 
     model_cls = OpenAICodexModel if args.provider == "openai-codex" else OpenAIChatModel
+    if args.provider == "openai-chat" and args.reasoning_effort:
+        raise SystemExit("--reasoning-effort is only supported by --provider openai-codex")
+    model_kwargs = {
+        "api_key": api_key,
+        "base_url": args.openai_base_url,
+        "model": args.openai_model,
+    }
+    if args.provider == "openai-codex":
+        model_kwargs["reasoning_effort"] = args.reasoning_effort
     return model_cls(
-        api_key=api_key,
-        base_url=args.openai_base_url,
-        model=args.openai_model,
+        **model_kwargs,
     )
 
 
@@ -332,6 +350,7 @@ def resolve_model_profile(
             model=args.openai_model,
             base_url=args.openai_base_url,
             api_key_env=args.openai_api_key_env,
+            reasoning_effort=args.reasoning_effort,
         )
     if name in {"openai-chat", "deepseek"}:
         return ModelProfile(

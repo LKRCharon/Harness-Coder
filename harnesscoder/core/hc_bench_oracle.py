@@ -13,6 +13,7 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 PLAN_PATHS = (
     DATA_DIR / "hc_bench_oracle.json",
     DATA_DIR / "hc_train_oracle.json",
+    DATA_DIR / "hc_bench_40_oracle.json",
 )
 
 
