@@ -245,6 +245,83 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
             record["prompt_sections"]["stable_prefix_tokens"],
         )
 
+    def test_context_assembly_injects_session_context(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Continue the prior task.",
+            cwd=".",
+            max_iterations=4,
+        )
+        session_context = {
+            "session_id": "interview",
+            "turn_count": 1,
+            "summary": "1. user='inspect repo'; status=success",
+            "recent_turns": [
+                {
+                    "turn_index": 1,
+                    "user_message": "inspect repo",
+                    "final_answer": "repo inspected",
+                    "status": "success",
+                    "run_id": "run_prev",
+                }
+            ],
+        }
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+            session_context=session_context,
+        )
+        payload = context.to_model_input()[1]["content"]
+        record = context.to_trace_record()
+
+        self.assertIn("session_context", payload)
+        self.assertIn("repo inspected", payload)
+        self.assertTrue(record["session_context_injected"])
+        self.assertEqual(record["session_id"], "interview")
+
+    def test_context_budget_records_section_reductions(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        context_pack = build_context_pack(state)
+        context_pack["hot_context"]["recent_observations"] = [
+            {
+                "tool_name": "read_file",
+                "ok": True,
+                "output": "x" * 2000,
+                "error": None,
+                "metadata": {"path": f"file_{index}.py"},
+            }
+            for index in range(8)
+        ]
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=context_pack,
+            context_mode="pack",
+        )
+        record = context.to_trace_record()
+        budget = record["context_budget"]
+
+        self.assertEqual(budget["version"], 2)
+        self.assertTrue(budget["sections"]["task_contract"]["preserved"])
+        self.assertIn("packed_context", budget["reduced_sections"])
+        packed = budget["sections"]["packed_context"]
+        self.assertTrue(packed["reduced"])
+        self.assertGreater(packed["raw_chars"], packed["chars"])
+        self.assertGreaterEqual(budget["dropped_blocks"], 0)
+        self.assertEqual(record["context_budget_sections"], budget["sections"])
+        self.assertEqual(record["context_dropped_blocks"], budget["dropped_blocks"])
+
     def test_prompt_cache_fingerprint_changes_when_tool_order_changes(self) -> None:
         state = AgentState(
             run_id="run_test",

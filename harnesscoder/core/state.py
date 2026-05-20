@@ -86,6 +86,7 @@ class AgentState:
     open_questions: list[str] = field(default_factory=list)
     budget: dict[str, Any] = field(default_factory=dict)
     memory_blocks: dict[str, MemoryBlock] = field(default_factory=default_memory_blocks)
+    session_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.refresh_budget()
@@ -152,6 +153,11 @@ class AgentState:
             "open_questions": list(self.open_questions),
             "budget": dict(self.budget),
             "memory_blocks": memory_blocks_to_records(self.memory_blocks),
+            "session_context": (
+                dict(self.session_context)
+                if isinstance(self.session_context, dict)
+                else None
+            ),
             "modified_files": list(self.modified_files),
             "action_count": len(self.actions),
             "observation_count": len(self.observations),
@@ -182,6 +188,11 @@ class AgentState:
             "open_questions": list(self.open_questions),
             "budget": dict(self.budget),
             "memory_blocks": memory_blocks_to_records(self.memory_blocks),
+            "session_context": (
+                dict(self.session_context)
+                if isinstance(self.session_context, dict)
+                else None
+            ),
         }
 
     @classmethod
@@ -259,6 +270,11 @@ class AgentState:
                 else {}
             ),
             memory_blocks=memory_blocks_from_records(record.get("memory_blocks")),
+            session_context=(
+                dict(record.get("session_context"))
+                if isinstance(record.get("session_context"), dict)
+                else None
+            ),
         )
         state.refresh_budget()
         return state

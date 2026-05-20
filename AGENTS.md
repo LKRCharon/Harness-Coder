@@ -91,6 +91,24 @@ This creates reliability hazards, so follow these rules:
   they are control arms, not claims of model intelligence.
 - For interview value, make failure categories and replay evidence visible.
 
+## Experiment Scheduling Rules
+
+For long-running experiment batches, prefer launch-and-log orchestration over
+chat-window supervision.
+
+- Use a queue runner, shell wrapper, or small scheduler that can launch the
+  experiments and keep working after the conversation moves on.
+- Maintain per-experiment-group logs and state files. The state model should have
+  four explicit buckets: `queue`, `running`, `fail`, and `success`.
+- Record stdout/stderr, command arguments, model/profile/config, start/end time,
+  exit code, and report path for each group so failures can be resumed or
+  explained without reconstructing them from chat.
+- Store generated run artifacts under ignored local paths such as
+  `.harnesscoder/experiments/` or `.harnesscoder/reports/`; do not stage them
+  unless the user explicitly asks.
+- When starting a batch, report the scheduler/log path and a short monitoring
+  command instead of requiring the user to watch the dialogue window.
+
 ## Versioning And Commit Rhythm
 
 - Use small local version milestones: `0.7.1`, `0.7.2`, etc.

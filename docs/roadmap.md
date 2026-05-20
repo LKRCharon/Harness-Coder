@@ -9,11 +9,12 @@ This roadmap is intentionally conservative. The project should not grow into a
 generic multi-agent framework, a LangGraph clone, or a web UI before the single
 agent runtime is demonstrably reliable.
 
-## Current Release: 1.2.x
+## Current Release: 1.3.2
 
-The 1.2 line keeps the 1.0 interview-ready runtime, the 1.1 prompt-cache-aware
-context governance, and adds a clean train/eval boundary for post-training
-work:
+The 1.3 line keeps the 1.0 interview-ready runtime, the 1.1
+prompt-cache-aware context governance, and the 1.2 train/eval boundary. It adds
+durable cross-run sessions for follow-up coding tasks, then tightens context
+evidence with Context Budget v2 and a context ablation matrix:
 
 - Event-sourced agent loop with JSONL traces.
 - Policy-gated local tools.
@@ -33,10 +34,19 @@ work:
   without mixing in train cases.
 - A small runtime control plane boundary for CLI/TUI/eval run-control decisions
   such as active-run protection and read-only status/trace commands.
+- Durable session JSON under `.harnesscoder/sessions/<session_id>.json`.
+- `session_context_loaded` and `context_packed.session_context_injected` trace
+  evidence for follow-up tasks.
+- CLI `--session` plus TUI `/session` and `/reset-session`.
+- Context Budget v2 on every `context_packed` event, with per-section chars,
+  budgets, preserved/reduced flags, dropped blocks, and total budget usage.
+- Replay/report metrics for context budget reductions and dropped blocks.
+- Built-in `--context-ablations` eval matrix across `full`, `no_repomap`,
+  `no_memory`, `no_context_compaction`, and `no_policy_retry`.
 
-### 1.2.x Quality Work
+### 1.3.x Quality Work
 
-Near-term 1.2.x releases should focus on tightening evidence rather than adding
+Near-term 1.3.x releases should focus on tightening evidence rather than adding
 new product surfaces:
 
 - Keep unit tests and HC-Bench-20 oracle green.
@@ -49,6 +59,8 @@ new product surfaces:
 - Preserve deterministic baselines so model changes can be separated from
   harness regressions.
 - Keep prompt/tool ordering deterministic and report stable-prefix changes.
+- Keep Context Budget v2 fields stable enough that replay and old reports remain
+  comparable across minor releases.
 - Keep HC-Train-40, HC-Bench-20, and HC-Bench-40 split metadata explicit so
   training trace collection and final eval evidence do not collapse into one
   dataset.
@@ -57,6 +69,10 @@ new product surfaces:
   scattered UI branches.
 - Use HC-Bench-40 for harder heldout comparisons while keeping HC-Bench-20 as a
   backward-compatible release/evidence baseline.
+- Add session-aware eval cases before claiming durable sessions improve real
+  follow-up task success.
+- Use the context ablation matrix for context-governance claims instead of
+  relying on one-off manual comparisons.
 
 ### Control Plane Boundary
 
@@ -84,9 +100,9 @@ The final truth remains the run trace, checkpoint, replay summary, eval report,
 and `RunResult`; the control plane only coordinates how entrypoints interact
 with that runtime.
 
-## 1.3.0: Read-Only Reviewer / Explorer Subagent
+## 1.4.0 Candidate: Read-Only Reviewer / Explorer Subagent
 
-1.3 may add a small read-only subagent lane. It should be a reviewer/explorer,
+1.4 may add a small read-only subagent lane. It should be a reviewer/explorer,
 not a general multi-agent platform.
 
 Scope:
@@ -119,7 +135,8 @@ evidence:
 - Larger heldout suites beyond HC-Bench-40, but only when the new cases add
   distinct failure modes or language/runtime coverage.
 - More realistic repo tasks with targeted verifiers.
-- Stronger context ablations across `none`, `pack`, `memory`, and RepoMap modes.
+- Stronger context ablations across more repositories, languages, and hidden
+  case variants.
 - Better replay UX for inspecting model actions, tool results, artifacts, and
   verifier outcomes.
 - More robust tool policies for language-specific build systems.

@@ -8,10 +8,12 @@ HarnessCoder 的路线只围绕一个核心判断：
 所以 1.0 之后也不应该马上扩成多 agent 平台、LangGraph/DAG 框架或 Web UI。
 路线重点仍然是把单 agent runtime 的证据链做扎实。
 
-## 当前版本：1.2.x
+## 当前版本：1.3.2
 
-1.2.x 保留 1.0 的可展示、可复现基线、1.1 的 prompt-cache-aware 上下文治理，
-并补上面向后训练的数据边界：
+1.3 保留 1.0 的可展示、可复现基线、1.1 的 prompt-cache-aware 上下文治理、
+1.2 的 train/eval 边界，并补上跨 run 跟进任务需要的 durable session。随后
+1.3.1/1.3.2 把上下文治理做得更可解释：Context Budget v2 进入 trace，context
+ablation matrix 进入 eval report。
 
 - 基于 JSONL trace 的事件化 agent loop。
 - 经过策略门控的本地工具。
@@ -29,10 +31,18 @@ HarnessCoder 的路线只围绕一个核心判断：
   扩展原 20 题。
 - 为 CLI/TUI/eval 的运行控制决策保留一个小型 runtime control plane 边界，
   先覆盖 active-run 保护和只读 `/status` / `/trace` 类命令。
+- `.harnesscoder/sessions/<session_id>.json` 下的 durable session。
+- `session_context_loaded` 和 `context_packed.session_context_injected` trace 证据。
+- CLI `--session`，以及 TUI `/session`、`/reset-session`。
+- 每个 `context_packed` 事件都记录 Context Budget v2，包括 section 字符数、
+  预算、preserved/reduced 标记、dropped blocks 和总预算使用量。
+- Replay/report 聚合 context budget reductions 和 dropped blocks。
+- 内置 `--context-ablations`，比较 `full`、`no_repomap`、`no_memory`、
+  `no_context_compaction` 和 `no_policy_retry`。
 
-### 1.2.x 打磨重点
+### 1.3.x 打磨重点
 
-近期 1.2.x 不继续堆新功能，而是强化证据质量：
+近期 1.3.x 不继续堆新功能，而是强化证据质量：
 
 - 保持 unit tests 和 HC-Bench-20 oracle 全绿。
 - 公开文档不暴露私人 provider 名、私人 endpoint 或本地 secret。
@@ -41,12 +51,15 @@ HarnessCoder 的路线只围绕一个核心判断：
 - 随着指标增多，保持 matrix report 仍然能读。
 - 保留 deterministic baseline，把模型波动和 harness 回归分开。
 - 保持 prompt / tool ordering 确定，并在报告里暴露 stable-prefix 变化。
+- 保持 Context Budget v2 字段稳定，让 replay 和旧报告在小版本之间可比。
 - 保持 HC-Train-40、HC-Bench-20、HC-Bench-40 的 split metadata 清楚，避免训练
   trace 收集和最终评测证据混在一起。
 - 把 `/status`、`/trace`、中断/取消、恢复、approval、active-run 保护逐步
   收敛到共享 runtime control 语义里，而不是散落在 UI 分支中。
 - 用 HC-Bench-40 做更难的 heldout 对比，同时保留 HC-Bench-20 作为历史可比的
   release/evidence baseline。
+- 先补 session-aware eval cases，再声称 durable session 真的提升跨 run 跟进任务。
+- 上下文治理相关结论优先来自 context ablation matrix，而不是一次性手工对比。
 
 ### Control Plane 边界
 
@@ -71,9 +84,9 @@ run-control 层应该回答这些问题：
 最终事实仍然是 run trace、checkpoint、replay summary、eval report 和
 `RunResult`；control plane 只负责协调入口如何进入 runtime。
 
-## 1.3.0：只读 Reviewer / Explorer Subagent
+## 1.4.0 候选：只读 Reviewer / Explorer Subagent
 
-1.3 可以加入一个小的只读 subagent，但定位是 reviewer/explorer，不是通用多
+1.4 可以加入一个小的只读 subagent，但定位是 reviewer/explorer，不是通用多
 agent 平台。
 
 范围：
@@ -104,7 +117,7 @@ agent 平台。
 - HC-Bench-40 之后继续扩更大 heldout suite，但前提是新增 case 真的带来不同的
   failure mode 或语言/runtime 覆盖。
 - 更接近真实仓库的任务和 targeted verifier。
-- 更系统地比较 `none`、`pack`、`memory`、RepoMap 等上下文模式。
+- 更系统地比较更多仓库、语言和 hidden case 变体里的上下文模式。
 - 更好的 replay 查看方式，用来检查 model action、tool result、artifact 和 verifier outcome。
 - 面向不同语言 / 构建系统的更稳健 tool policy。
 - 可选的本地 CLI 打包发布。

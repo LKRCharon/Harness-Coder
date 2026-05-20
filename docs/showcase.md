@@ -11,7 +11,9 @@ task-local memory, context compression, and repository-level context governance.
   execution.
 - Trace/replay/eval: runs can be replayed and benchmarked into Markdown reports.
 - Context governance: packed context, task-local memory, compression metrics,
-  and RepoMap can be ablated.
+  RepoMap, and Context Budget v2 can be ablated and inspected from trace.
+- Durable sessions: CLI/TUI follow-up tasks can reuse bounded session summaries
+  while every run keeps a separate trace.
 
 ## Current Evidence
 
@@ -66,6 +68,28 @@ pack + repo_map auto:
 The point of the ablation is not that the oracle becomes smarter. It proves the
 harness can turn repository context governance on and off and report the change.
 
+Context Budget v2 evidence appears on every `context_packed` event:
+
+```json
+{
+  "context_budget": {
+    "version": 2,
+    "sections": {
+      "task_contract": {"preserved": true, "budget": 2400},
+      "packed_context": {"reduced": true, "budget": 16000}
+    },
+    "reduced_sections": ["packed_context"],
+    "dropped_blocks": 2
+  }
+}
+```
+
+The built-in context ablation matrix compares `full`, `no_repomap`,
+`no_memory`, `no_context_compaction`, and `no_policy_retry`, then reports pass
+rate, tool calls, repeated reads, invalid calls, policy denials, max-iteration
+failures, context tokens, budget reductions, dropped blocks, RepoMap use, first
+target read step, memory updates, compression, and failure breakdown.
+
 ## Architecture
 
 See [architecture.md](architecture.md) for the full diagram. The short version:
@@ -80,6 +104,8 @@ flowchart LR
     Replay --> Matrix["Eval matrix"]
     Trace --> Context["Context governance"]
     Context --> Model
+    Session["SessionStore"] --> Context
+    Trace --> Session
 ```
 
 ## Replay Example
@@ -140,6 +166,13 @@ python -m harnesscoder \
   --eval eval/hc_bench_20.json \
   --max-iterations 8 \
   --eval-report .harnesscoder/reports/hc-bench-20-real-matrix.md
+
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_20.json \
+  --context-ablations \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-20-context-ablations.md
 ```
 
 Keep `models.toml` and `.env` local. Public docs should show environment

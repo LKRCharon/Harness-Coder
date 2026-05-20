@@ -138,6 +138,23 @@ class EvalMatrixProfileResult:
     planned_case_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ContextAblation:
+    name: str
+    context_mode: ContextMode
+    repo_map_mode: RepoMapMode
+    allow_policy_recovery: bool = True
+
+
+DEFAULT_CONTEXT_ABLATIONS = (
+    ContextAblation("full", "memory", "auto", True),
+    ContextAblation("no_repomap", "memory", "none", True),
+    ContextAblation("no_memory", "pack", "auto", True),
+    ContextAblation("no_context_compaction", "none", "none", True),
+    ContextAblation("no_policy_retry", "memory", "auto", False),
+)
+
+
 def load_eval_cases(cases_path: str | Path) -> list[EvalCase]:
     data = json.loads(Path(cases_path).read_text(encoding="utf-8"))
     if isinstance(data, dict):
@@ -201,6 +218,7 @@ def run_eval_cases(
     model: ModelAdapter | None = None,
     context_mode: ContextMode = "none",
     repo_map_mode: RepoMapMode = "auto",
+    allow_policy_recovery: bool = True,
 ) -> list[EvalResult]:
     root = Path(workspace_root).resolve()
     resolved_cases_path = _resolve_cases_path(cases_path, root)
@@ -216,6 +234,8 @@ def run_eval_cases(
         )
         case_cwd = _resolve_inside(workspace.run_root, case.cwd)
         effective_max_iterations = case.step_budget or max_iterations
+        if not allow_policy_recovery and case.category == "policy":
+            effective_max_iterations = min(effective_max_iterations, 1)
         runner = AgentRunner(
             model=model or _build_model(provider),
             cwd=case_cwd,
@@ -318,6 +338,7 @@ def run_eval_matrix(
     max_iterations: int = 8,
     context_mode: ContextMode = "none",
     repo_map_mode: RepoMapMode = "auto",
+    allow_policy_recovery: bool = True,
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
     root = Path(workspace_root).resolve()
@@ -345,11 +366,62 @@ def run_eval_matrix(
             model=model,
             context_mode=context_mode,
             repo_map_mode=repo_map_mode,
+            allow_policy_recovery=allow_policy_recovery,
         )
         matrix.append(
             EvalMatrixProfileResult(
                 profile_name=profile.name,
                 provider=profile.provider,
+                results=results,
+                planned_case_ids=planned_case_ids,
+            )
+        )
+    return matrix
+
+
+def run_context_ablation_matrix(
+    cases_path: str | Path,
+    workspace_root: str | Path,
+    *,
+    provider: str = "hc-bench-oracle",
+    profile: ModelProfile | None = None,
+    trace_root: str | Path = ".harnesscoder/eval-runs",
+    max_iterations: int = 8,
+    ablations: list[ContextAblation] | None = None,
+) -> list[EvalMatrixProfileResult]:
+    matrix: list[EvalMatrixProfileResult] = []
+    root = Path(workspace_root).resolve()
+    planned_case_ids = [case.id for case in load_eval_cases(_resolve_cases_path(cases_path, root))]
+    result_provider = profile.provider if profile is not None else provider
+    for ablation in ablations or list(DEFAULT_CONTEXT_ABLATIONS):
+        try:
+            model = profile.build() if profile is not None else None
+            results = run_eval_cases(
+                cases_path=cases_path,
+                workspace_root=workspace_root,
+                provider=result_provider,
+                trace_root=trace_root,
+                max_iterations=max_iterations,
+                model=model,
+                context_mode=ablation.context_mode,
+                repo_map_mode=ablation.repo_map_mode,
+                allow_policy_recovery=ablation.allow_policy_recovery,
+            )
+        except Exception as exc:
+            matrix.append(
+                EvalMatrixProfileResult(
+                    profile_name=ablation.name,
+                    provider=result_provider,
+                    results=[],
+                    error=f"{type(exc).__name__}: {exc}",
+                    planned_case_ids=planned_case_ids,
+                )
+            )
+            continue
+        matrix.append(
+            EvalMatrixProfileResult(
+                profile_name=ablation.name,
+                provider=result_provider,
                 results=results,
                 planned_case_ids=planned_case_ids,
             )
@@ -379,6 +451,13 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     context_packs = _sum_metric(results, "context_packed_count")
     context_injections = _sum_metric(results, "context_injected_count")
     estimated_context_tokens = _sum_metric(results, "estimated_context_tokens")
+    context_budget_reductions = _sum_metric(results, "context_budget_reduced_count")
+    context_budget_dropped_blocks = _sum_metric(
+        results,
+        "context_budget_dropped_blocks",
+    )
+    context_budget_chars = _sum_metric(results, "context_budget_total_chars")
+    context_budget_limit = _sum_metric(results, "context_budget_total_budget")
     stable_prefix_tokens = _sum_metric(results, "stable_prefix_tokens")
     dynamic_suffix_tokens = _sum_metric(results, "dynamic_suffix_tokens")
     stable_prefix_changes = _sum_metric(results, "stable_prefix_change_count")
@@ -434,6 +513,10 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Context packs | {context_packs} |",
         f"| Context injections | {context_injections} |",
         f"| Estimated context tokens | {estimated_context_tokens} |",
+        f"| Context budget reductions | {context_budget_reductions} |",
+        f"| Context dropped blocks | {context_budget_dropped_blocks} |",
+        f"| Context budget chars | {context_budget_chars} |",
+        f"| Context budget limit | {context_budget_limit} |",
         f"| Stable prefix tokens | {stable_prefix_tokens} |",
         f"| Dynamic suffix tokens | {dynamic_suffix_tokens} |",
         f"| Stable prefix changes | {stable_prefix_changes} |",
@@ -588,8 +671,8 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
         "",
         "## Profile Summary",
         "",
-        "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Budget reductions | Dropped blocks | Budget chars | Budget limit | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for profile_result in matrix:
@@ -609,6 +692,10 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                         "n/a",
                         "n/a",
                         "n/a",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
                         "0",
                         "0",
                         "0",
@@ -668,6 +755,10 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                     str(_sum_metric(results, "failed_tool_count")),
                     str(_sum_metric(results, "context_injected_count")),
                     str(_sum_metric(results, "estimated_context_tokens")),
+                    str(_sum_metric(results, "context_budget_reduced_count")),
+                    str(_sum_metric(results, "context_budget_dropped_blocks")),
+                    str(_sum_metric(results, "context_budget_total_chars")),
+                    str(_sum_metric(results, "context_budget_total_budget")),
                     str(_sum_metric(results, "stable_prefix_change_count")),
                     str(_sum_metric(results, "memory_updated_count")),
                     str(_sum_metric(results, "repo_map_used_count")),
@@ -816,6 +907,131 @@ def render_markdown_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
                 f"- `{item.profile_name}` (`{item.provider}`): "
                 f"{_inline(item.error or '')}"
             )
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_context_ablation_matrix(matrix: list[EvalMatrixProfileResult]) -> str:
+    all_case_ids = _case_ids_from_matrix(matrix)
+    lines = [
+        "# HarnessCoder Context Ablation Matrix",
+        "",
+        f"- Ablations: {len(matrix)}",
+        f"- Cases: {len(all_case_ids)}",
+        "",
+        "## Summary",
+        "",
+        "| Ablation | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Max-iteration failures | Context injected | Est. tokens | Budget reductions | Dropped blocks | RepoMap used | First target read step | Memory updates | Compression | Failure breakdown |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in matrix:
+        if item.error:
+            planned_total = len(item.planned_case_ids)
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md_cell(item.profile_name),
+                        str(planned_total),
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "n/a",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "0",
+                        "n/a",
+                        "0",
+                        "0",
+                        _md_cell(f"profile_error=1 skipped={planned_total} ({item.error})"),
+                    ]
+                )
+                + " |"
+            )
+            continue
+        results = item.results
+        total = len(results)
+        passed = sum(1 for result in results if result.passed)
+        agent_successes = sum(1 for result in results if result.agent_success)
+        patch_successes = sum(1 for result in results if result.patch_success)
+        test_passes = sum(1 for result in results if result.test_passed)
+        verifier_passes = sum(1 for result in results if result.verifier_passed)
+        failure_breakdown = Counter(result.failure_category for result in results)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _md_cell(item.profile_name),
+                    str(total),
+                    _format_rate(passed, total),
+                    _format_rate(agent_successes, total),
+                    _format_rate(patch_successes, total),
+                    _format_rate(test_passes, total),
+                    _format_rate(verifier_passes, total),
+                    _format_number(_average_metric(results, "average_tool_calls")),
+                    str(_sum_metric(results, "repeated_read_count")),
+                    str(_sum_metric(results, "invalid_tool_call_count")),
+                    str(_sum_metric(results, "policy_denial_count")),
+                    str(_sum_metric(results, "failed_tool_count")),
+                    str(
+                        sum(
+                            1
+                            for result in results
+                            if result.runner_status == "max_iterations"
+                        )
+                    ),
+                    str(_sum_metric(results, "context_injected_count")),
+                    str(_sum_metric(results, "estimated_context_tokens")),
+                    str(_sum_metric(results, "context_budget_reduced_count")),
+                    str(_sum_metric(results, "context_budget_dropped_blocks")),
+                    str(_sum_metric(results, "repo_map_used_count")),
+                    _format_nullable_number(
+                        _average_nullable_metric(results, "first_repo_map_target_step")
+                    ),
+                    str(_sum_metric(results, "memory_updated_count")),
+                    str(_sum_metric(results, "compression_count")),
+                    _md_cell(_format_breakdown(failure_breakdown)),
+                ]
+            )
+            + " |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Case Matrix",
+            "",
+            "| Case | " + " | ".join(_md_cell(item.profile_name) for item in matrix) + " |",
+            "| --- | " + " | ".join("---" for _item in matrix) + " |",
+        ]
+    )
+    by_profile = {
+        item.profile_name: {result.case_id: result for result in item.results}
+        for item in matrix
+    }
+    for case_id in all_case_ids:
+        row = [case_id]
+        for item in matrix:
+            result = by_profile.get(item.profile_name, {}).get(case_id)
+            if result is None:
+                row.append("SKIP" if item.error else "-")
+            else:
+                status = "PASS" if result.passed else "FAIL"
+                row.append(
+                    _md_cell(
+                        f"{status}<br>{result.failure_category}<br>{result.run_id}"
+                    )
+                )
+        lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(lines).rstrip() + "\n"
 

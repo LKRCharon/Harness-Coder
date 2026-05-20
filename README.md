@@ -30,13 +30,16 @@ policy-gated loop.
 
 ## Current Status
 
-Version `1.2.1` is a runnable local runtime with real bugfix and minimal
+Version `1.3.2` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20/40, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
-large-output artifact store for audit/replay. It also separates training trace
-collection from live evaluation through HC-Train-40 and HC-Bench-20/40. It
-includes:
+large-output artifact store for audit/replay. It also adds durable cross-run
+sessions for CLI/TUI follow-up tasks while keeping each agent run separately
+traceable. The 1.3.1/1.3.2 slices add Context Budget v2 and a context ablation
+matrix so prompt compaction and RepoMap/memory behavior can be inspected from
+trace and compared in reports. Training trace collection remains separate from
+live evaluation through HC-Train-40 and HC-Bench-20/40. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -53,6 +56,10 @@ includes:
   under the run's `artifacts/` directory with size and hash metadata.
 - `context_packed`, `checkpoint_created`, `run_resumed`, and `test_result`
   events for reliability-oriented replay.
+- Context Budget v2 fields on `context_packed`, including per-section chars,
+  budgets, preserved/reduced flags, dropped blocks, and total budget usage.
+- Durable session JSON under `.harnesscoder/sessions/<session_id>.json` and
+  `session_context_loaded` trace events for cross-run follow-up tasks.
 - `repo_map_built` and `repo_map_used` events for repository-level context
   governance.
 - Trace replay summaries through `python -m harnesscoder.replay`.
@@ -82,9 +89,11 @@ includes:
 python -m harnesscoder "看一下这个 repo 是做什么的"
 python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
+python -m harnesscoder --session interview "继续刚才那个 repo 解释"
 python -m harnesscoder --eval eval/cases.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_40.json
+python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json --context-ablations
 ```
 
 The scripted model currently performs a small repo-orientation pass: search for
@@ -117,10 +126,16 @@ commands for direct tools and runtime controls:
 /test python -m unittest discover -s tests
 /run git status --short
 /trace latest
+/session interview
+/reset-session
 ```
 
 The current TUI is intentionally small: it is a runnable control surface for the
-runtime and eval harness, not a full Claude Code clone.
+runtime and eval harness, not a full Claude Code clone. It now supports durable
+sessions for follow-up tasks: `/session <id>` switches the session, each completed
+run appends a bounded turn summary under `.harnesscoder/sessions/`, and the next
+run receives that session context through the same prompt/trace path as other
+context governance inputs.
 
 The control surface now goes through a small runtime control plane rather than
 one-off TUI branches. During an active run, mutating commands are blocked and
@@ -156,6 +171,13 @@ python -m harnesscoder \
   --repo-map-mode none \
   "inspect this repo"
 ```
+
+Every model-step `context_packed` trace records Context Budget v2 evidence:
+per-section `raw_chars`, final `chars`, `budget`, `preserved`, `reduced`, and
+`dropped_blocks`. The current task contract is preserved while lower-priority
+sections such as observations, packed context, session context, RepoMap, and
+working memory can be clipped or reduced. Replay and eval reports aggregate
+budget reductions, dropped blocks, total context chars, and total budget.
 
 ## OpenAI-Compatible Providers
 
@@ -233,6 +255,7 @@ Each run writes event records with a timestamp, run id, and event type. The
 runtime trace includes at least:
 
 - `run_started`
+- `session_context_loaded`
 - `context_packed`
 - `model_action`
 - `policy_decision`
@@ -245,6 +268,23 @@ runtime trace includes at least:
 
 These traces are intentionally append-only JSONL so later replay and eval code
 can consume them without depending on in-memory state.
+
+A `context_packed` event also carries `context_budget`, for example:
+
+```json
+{
+  "type": "context_packed",
+  "context_budget": {
+    "version": 2,
+    "sections": {
+      "task_contract": {"chars": 250, "budget": 2400, "preserved": true},
+      "packed_context": {"raw_chars": 21000, "chars": 15900, "budget": 16000, "reduced": true}
+    },
+    "reduced_sections": ["packed_context"],
+    "dropped_blocks": 2
+  }
+}
+```
 
 ## Developer Process Notes
 
@@ -262,7 +302,10 @@ artifact store is scoped in [docs/spec-1.0.2.md](docs/spec-1.0.2.md), and the
 [docs/spec-1.1.0.md](docs/spec-1.1.0.md). The 1.2.0 train/heldout benchmark
 split is scoped in [docs/spec-1.2.0.md](docs/spec-1.2.0.md), and the 1.2.1
 HC-Bench-40 / run-control / reasoning-strength release is scoped in
-[docs/spec-1.2.1.md](docs/spec-1.2.1.md). The Claude Code
+[docs/spec-1.2.1.md](docs/spec-1.2.1.md). The 1.3.0 durable session release is
+scoped in [docs/spec-1.3.0.md](docs/spec-1.3.0.md), Context Budget v2 is scoped
+in [docs/spec-1.3.1.md](docs/spec-1.3.1.md), and the context ablation matrix is
+scoped in [docs/spec-1.3.2.md](docs/spec-1.3.2.md). The Claude Code
 prompt caching note that motivated 1.1 is summarized in
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md).
 
@@ -351,9 +394,9 @@ python -m harnesscoder \
 
 The matrix report compares pass rate, test pass rate, verifier pass rate,
 average tool calls, repeated reads, invalid calls, policy denials, tool
-failures, memory/compression metrics, RepoMap use/injection metrics, observation
-artifact metrics, and failure categories. Each profile/case run still keeps its
-own trace and artifact directory. If a real-model
+failures, memory/compression metrics, RepoMap use/injection metrics, context
+budget reductions and dropped blocks, observation artifact metrics, and failure
+categories. Each profile/case run still keeps its own trace and artifact directory. If a real-model
 profile cannot initialize, the matrix records the profile error instead of
 hiding the reason.
 
@@ -401,6 +444,24 @@ python -m harnesscoder \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-with-repo-map.md
 ```
+
+Run the built-in context ablation matrix:
+
+```bash
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_20.json \
+  --context-ablations \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-20-context-ablations.md
+```
+
+The ablation matrix compares `full`, `no_repomap`, `no_memory`,
+`no_context_compaction`, and `no_policy_retry` on the same cases. It reports
+pass rate, tool calls, repeated reads, invalid calls, policy denials,
+max-iteration failures, context tokens, budget reductions, dropped blocks,
+RepoMap use, first target read step, memory updates, compression, and failure
+breakdown.
 
 Run HC-Bench-20 with the deterministic local oracle:
 
@@ -478,5 +539,6 @@ Near-term TODOs:
 
 - Improve the TUI with better history navigation and richer trace inspection
   commands.
+- Add session-aware eval cases that measure follow-up task quality across runs.
 - Add richer failure replay fixtures under `replay/`.
 - Add token/cost accounting when providers return usage data.

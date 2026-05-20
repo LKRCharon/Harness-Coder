@@ -15,6 +15,7 @@ from harnesscoder.core.models import (
     ScriptedModel,
 )
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.session import DEFAULT_SESSION_ID, DEFAULT_SESSION_ROOT, SessionStore
 from harnesscoder.model_profiles import (
     ModelProfile,
     load_model_profiles,
@@ -68,6 +69,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated profiles for eval matrix mode, for example scripted,gpt55.",
     )
     parser.add_argument(
+        "--context-ablations",
+        action="store_true",
+        help=(
+            "Run the context ablation matrix for --eval "
+            "(full/no_repomap/no_memory/no_context_compaction/no_policy_retry)."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"harnesscoder {__version__}",
@@ -99,6 +108,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--trace-root",
         default=".harnesscoder/runs",
         help="Directory where run traces are written.",
+    )
+    parser.add_argument(
+        "--session",
+        metavar="ID",
+        help=(
+            "Use a durable cross-run session for this task. "
+            f"Defaults to {DEFAULT_SESSION_ID!r} in the TUI."
+        ),
+    )
+    parser.add_argument(
+        "--session-root",
+        default=str(DEFAULT_SESSION_ROOT),
+        help="Directory where durable session JSON files are written.",
     )
     parser.add_argument(
         "--eval-trace-root",
@@ -177,11 +199,43 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.eval:
         from harnesscoder.eval_runner import (
+            render_context_ablation_matrix,
             render_markdown_matrix,
             render_markdown_report,
+            run_context_ablation_matrix,
             run_eval_cases,
             run_eval_matrix,
         )
+
+        if args.context_ablations:
+            if args.model_profiles:
+                raise SystemExit(
+                    "--context-ablations accepts --provider or one --model-profile; "
+                    "do not combine it with --model-profiles."
+                )
+            profile = (
+                resolve_model_profile(args.model_profile, args, cwd)
+                if args.model_profile
+                else None
+            )
+            matrix = run_context_ablation_matrix(
+                cases_path=args.eval,
+                workspace_root=cwd,
+                provider=args.provider,
+                profile=profile,
+                trace_root=Path(args.eval_trace_root),
+                max_iterations=args.max_iterations,
+            )
+            report = render_context_ablation_matrix(matrix)
+            if args.eval_report:
+                report_path = Path(args.eval_report)
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(report, encoding="utf-8")
+                print(f"context ablation report: {report_path.resolve()}")
+            else:
+                print(report, end="")
+            matrix_completed = all(item.error is None for item in matrix)
+            return 0 if matrix_completed else 1
 
         if args.model_profiles:
             profiles = build_eval_profiles(args, cwd)
@@ -251,6 +305,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_iterations=args.max_iterations,
                 context_mode=args.context_mode,
                 repo_map_mode=args.repo_map_mode,
+                session_id=args.session or DEFAULT_SESSION_ID,
+                session_root=Path(args.session_root),
             ),
             initial_message=task or None,
         )
@@ -266,13 +322,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         context_mode=args.context_mode,
         repo_map_mode=args.repo_map_mode,
     )
-    result = runner.run(task)
+    session_store = SessionStore(Path(args.session_root), cwd) if args.session else None
+    session_context = (
+        session_store.build_context(args.session) if session_store is not None else None
+    )
+    result = runner.run(task, session_context=session_context)
+    if session_store is not None:
+        session_store.append_run(args.session, user_message=task, result=result)
 
     print(result.final_answer)
     print()
     print(f"status: {result.status}")
     print(f"run_id: {result.run_id}")
     print(f"trace: {result.trace_path}")
+    if args.session:
+        print(f"session: {session_store.path_for(args.session)}")
 
     return 0 if result.status == "success" else 1
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from harnesscoder.core.artifacts import store_large_observation
@@ -59,7 +59,12 @@ class AgentRunner:
         self.repo_map_mode = repo_map_mode
         self._stable_prefix_hash: str | None = None
 
-    def run(self, task: str) -> RunResult:
+    def run(
+        self,
+        task: str,
+        *,
+        session_context: dict[str, Any] | None = None,
+    ) -> RunResult:
         run_id = self._new_run_id()
         trace = TraceWriter(run_id=run_id, trace_root=self.trace_root, cwd=self.cwd)
         state = AgentState(
@@ -67,6 +72,7 @@ class AgentRunner:
             task=task,
             cwd=str(self.cwd),
             max_iterations=self.max_iterations,
+            session_context=session_context,
         )
         state.messages.append({"role": "user", "content": task})
 
@@ -80,7 +86,18 @@ class AgentRunner:
             context_mode=self.context_mode,
             repo_map_max_tokens=self.repo_map_max_tokens,
             repo_map_mode=self.repo_map_mode,
+            session_id=_session_id(session_context),
+            session_turn_count=_session_turn_count(session_context),
+            session_context_injected=session_context is not None,
         )
+        if session_context is not None:
+            trace.emit(
+                "session_context_loaded",
+                session_id=_session_id(session_context),
+                turn_count=_session_turn_count(session_context),
+                summary=session_context.get("summary"),
+                recent_turn_count=len(session_context.get("recent_turns") or []),
+            )
 
         return self._run_loop(state, trace)
 
@@ -107,7 +124,11 @@ class AgentRunner:
         )
         return self._run_loop(state, trace)
 
-    def _run_loop(self, state: AgentState, trace: TraceWriter) -> RunResult:
+    def _run_loop(
+        self,
+        state: AgentState,
+        trace: TraceWriter,
+    ) -> RunResult:
         if state.done:
             status = "success" if state.phase == "done" else "failed"
             answer = state.final_answer or ""
@@ -142,6 +163,7 @@ class AgentRunner:
                 context_pack=context_pack,
                 context_mode=self.context_mode,
                 repo_map=repo_map_result.text if repo_map_result is not None else None,
+                session_context=state.session_context,
             )
             trace.emit(
                 "context_packed",
@@ -275,6 +297,7 @@ class AgentRunner:
                     context_pack=context_pack,
                     context_mode=self.context_mode,
                     repo_map=None,
+                    session_context=state.session_context,
                 )
                 trace.emit(
                     "context_packed",
@@ -484,3 +507,20 @@ class AgentRunner:
 
     def _new_run_id(self) -> str:
         return f"run_{uuid4().hex[:12]}"
+
+
+def _session_id(session_context: dict[str, Any] | None) -> str | None:
+    if not isinstance(session_context, dict):
+        return None
+    value = session_context.get("session_id")
+    return str(value) if value is not None else None
+
+
+def _session_turn_count(session_context: dict[str, Any] | None) -> int:
+    if not isinstance(session_context, dict):
+        return 0
+    value = session_context.get("turn_count")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

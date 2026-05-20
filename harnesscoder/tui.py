@@ -27,6 +27,12 @@ from harnesscoder.core.control import ACTIVE_RUN_READ_ONLY_COMMANDS, RunControlP
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
+from harnesscoder.core.session import (
+    DEFAULT_SESSION_ID,
+    DEFAULT_SESSION_ROOT,
+    SessionStore,
+    normalize_session_id,
+)
 from harnesscoder.core.tools import ToolRegistry
 
 
@@ -46,9 +52,12 @@ class TuiConfig:
     reasoning_effort: str | None = None
     context_mode: ContextMode = "none"
     repo_map_mode: RepoMapMode = "auto"
+    session_id: str = DEFAULT_SESSION_ID
+    session_root: Path = DEFAULT_SESSION_ROOT
 
     def __post_init__(self) -> None:
         self.reasoning_effort = normalize_reasoning_effort(self.reasoning_effort)
+        self.session_id = normalize_session_id(self.session_id)
 
 
 @dataclass(slots=True)
@@ -457,7 +466,14 @@ class HarnessCoderTui:
                 context_mode=active.config.context_mode,
                 repo_map_mode=active.config.repo_map_mode,
             )
-            result = runner.run(active.prompt)
+            store = self._session_store(active.config)
+            session_context = store.build_context(active.config.session_id)
+            result = runner.run(active.prompt, session_context=session_context)
+            store.append_run(
+                active.config.session_id,
+                user_message=active.prompt,
+                result=result,
+            )
         except Exception as exc:
             with self._active_lock:
                 active.error = f"{type(exc).__name__}: {exc}"
@@ -521,6 +537,8 @@ class HarnessCoderTui:
             max_iterations=self.config.max_iterations,
             context_mode=self.config.context_mode,
             repo_map_mode=self.config.repo_map_mode,
+            session_id=self.config.session_id,
+            session_root=self.config.session_root,
         )
 
     def _existing_trace_paths(self, config: TuiConfig) -> set[Path]:
@@ -604,6 +622,8 @@ class HarnessCoderTui:
             "run": self._cmd_run,
             "trace": self._cmd_trace,
             "repo-map": self._cmd_repo_map,
+            "session": self._cmd_session,
+            "reset-session": self._cmd_reset_session,
         }
 
         handler = handlers.get(command)
@@ -635,6 +655,8 @@ class HarnessCoderTui:
                         "/reasoning [none|minimal|low|medium|high|xhigh|reset] - show or change Codex reasoning effort",
                         "/cwd [path] - show or change repository cwd",
                         "/max-iterations [n] - show or change loop limit",
+                        "/session [id] - show or switch durable session",
+                        "/reset-session [id] - clear a durable session",
                         "/tools - list direct slash tools",
                         "/repo-map [query] - call repo_map",
                         "/read <path> [offset] [limit] - call read_file",
@@ -663,6 +685,8 @@ class HarnessCoderTui:
                         f"max_iterations: {self.config.max_iterations}",
                         f"context_mode: {self.config.context_mode}",
                         f"repo_map_mode: {self.config.repo_map_mode}",
+                        f"session_id: {self.config.session_id}",
+                        f"session_root: {self._session_root_path()}",
                         f"trace_root: {self.config.trace_root}",
                     ]
                 ),
@@ -777,6 +801,46 @@ class HarnessCoderTui:
                 "/run -> run_command with policy gate.",
             )
         )
+
+    def _cmd_session(self, args: list[str], _line: str) -> None:
+        try:
+            if args:
+                self.config.session_id = normalize_session_id(args[0])
+            store = self._session_store()
+            record = store.load(self.config.session_id)
+        except Exception as exc:
+            self.messages.append(Message("error", f"session error: {exc}"))
+            return
+
+        context = store.build_context(self.config.session_id)
+        lines = [
+            f"session_id: {self.config.session_id}",
+            f"path: {store.path_for(self.config.session_id)}",
+            f"turns: {context['turn_count']}",
+        ]
+        if record.summary:
+            lines.append("summary:")
+            lines.append(record.summary)
+        else:
+            lines.append("summary: <empty>")
+        self.messages.append(Message("system", "\n".join(lines)))
+
+    def _cmd_reset_session(self, args: list[str], _line: str) -> None:
+        target = args[0] if args else self.config.session_id
+        try:
+            target = normalize_session_id(target)
+            store = self._session_store()
+            path = store.reset(target)
+        except Exception as exc:
+            self.messages.append(Message("error", f"session reset error: {exc}"))
+            return
+        if target == self.config.session_id:
+            self.messages = [
+                message for message in self.messages if message.role != "user"
+            ]
+            self.messages.append(Message("system", f"session reset: {target}\npath: {path}"))
+        else:
+            self.messages.append(Message("system", f"session reset: {target}\npath: {path}"))
 
     def _cmd_read(self, args: list[str], _line: str) -> None:
         if not args:
@@ -907,6 +971,16 @@ class HarnessCoderTui:
         if config.trace_root.is_absolute():
             return config.trace_root
         return (config.cwd / config.trace_root).resolve()
+
+    def _session_root_path(self, config: TuiConfig | None = None) -> Path:
+        config = config or self.config
+        if config.session_root.is_absolute():
+            return config.session_root
+        return (config.cwd / config.session_root).resolve()
+
+    def _session_store(self, config: TuiConfig | None = None) -> SessionStore:
+        config = config or self.config
+        return SessionStore(config.session_root, config.cwd)
 
     def _latest_trace_event_label(self, trace_path: Path | None) -> str:
         if trace_path is None or not trace_path.is_file():

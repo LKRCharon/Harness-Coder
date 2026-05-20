@@ -9,7 +9,7 @@ simple and dynamic while making every decision replayable and measurable.
 flowchart TD
     UserTask["User task"] --> Runner["AgentRunner"]
     Runner --> Context["ContextAssembler"]
-    Context --> Prompt["System instructions<br/>task contract<br/>packed context<br/>working memory<br/>RepoMap<br/>recent observations<br/>available tools"]
+    Context --> Prompt["System instructions<br/>task contract<br/>packed context<br/>working memory<br/>RepoMap<br/>session context<br/>recent observations<br/>available tools"]
     Prompt --> Model["ModelAdapter<br/>scripted / oracle / real model"]
     Model --> Action["ModelAction JSON"]
     Action --> Policy["ToolPolicy"]
@@ -87,6 +87,30 @@ and broad shell control tokens are blocked.
 - `run_tests`
 - `run_command`
 
+## Durable Sessions
+
+HarnessCoder supports task-oriented cross-run sessions for CLI/TUI follow-up
+work. This is deliberately narrower than a general chat assistant memory. Each
+agent run still receives a fresh `run_id`, writes its own trace, and can be
+replayed independently.
+
+`SessionStore` persists bounded turn summaries under
+`.harnesscoder/sessions/<session_id>.json`. Before a session-backed run starts,
+the runner loads a compact session context containing the session id, turn count,
+summary, recent user messages, final answers, statuses, and trace paths. That
+context is injected into prompt assembly and recorded through
+`session_context_loaded` and `context_packed.session_context_injected`.
+
+```text
+durable session -> session_context -> AgentRunner.run(...)
+single run -> trace/checkpoint/replay
+completed run -> append bounded turn summary back to the session
+```
+
+Session context is also stored in `AgentState`, so checkpoints can resume a
+session-backed run without silently dropping the cross-run context that was shown
+to the model.
+
 ## Context Governance
 
 Packed context summarizes recent observations, older trace history, modified
@@ -106,11 +130,21 @@ classes, functions, and signatures with `ast`, falls back to regex symbols for
 other text files, ranks by query overlap, and renders under token/file bounds.
 It avoids local secret-like files such as `.env` and `models.toml`.
 
+Context Budget v2 makes prompt compaction explainable. Before each model call,
+prompt assembly budgets named sections such as `system`, `task_contract`,
+`packed_context`, `working_memory`, `repo_map`, `session_context`, and
+`recent_observations`. The task contract is preserved; reducible sections can be
+clipped or have older blocks dropped. The resulting `context_packed` event
+records `context_budget.sections`, `context_reduced_sections`,
+`context_dropped_blocks`, `context_budget_total_chars`, and
+`context_budget_total_budget`.
+
 ## Trace And Replay
 
 The trace is append-only JSONL. Important event types include:
 
 - `run_started`
+- `session_context_loaded`
 - `context_packed`
 - `repo_map_built`
 - `repo_map_used`
@@ -124,9 +158,9 @@ The trace is append-only JSONL. Important event types include:
 - `run_finished`
 
 Replay reconstructs final state and computes metrics such as tool calls,
-repeated reads, invalid calls, policy denials, context tokens, compression
-count, memory updates, RepoMap use, time to first edit, search-to-edit steps, and
-failure category.
+repeated reads, invalid calls, policy denials, context tokens, context budget
+reductions, dropped context blocks, compression count, memory updates, RepoMap
+use, time to first edit, search-to-edit steps, and failure category.
 
 ## Eval Flow
 
@@ -146,3 +180,10 @@ ProgramBench-style programming repairs, parser recovery, richer greenfield
 tasks, large-context lookup tasks, and policy/security cases. The oracle profile
 proves the harness and verifier contracts are solvable before real-model
 profiles are compared.
+
+The context ablation matrix is an eval-facing view over the same runtime. It
+runs the same cases with `full`, `no_repomap`, `no_memory`,
+`no_context_compaction`, and `no_policy_retry`, then compares pass rate, tool
+calls, repeated reads, invalid calls, policy denials, max-iteration failures,
+context budget use, RepoMap use, first target read step, memory updates,
+compression, and failure breakdown.

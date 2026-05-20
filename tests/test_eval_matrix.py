@@ -6,12 +6,15 @@ from pathlib import Path
 
 from harnesscoder.cli import main
 from harnesscoder.eval_runner import (
+    DEFAULT_CONTEXT_ABLATIONS,
     EvalMatrixProfileResult,
     EvalCase,
     EvalResult,
     _run_command_for_eval,
+    render_context_ablation_matrix,
     render_markdown_report,
     render_markdown_matrix,
+    run_context_ablation_matrix,
     run_eval_cases,
     run_eval_matrix,
 )
@@ -102,6 +105,52 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("scripted_b", report)
         self.assertIn("bugfix-add-one", report)
 
+    def test_context_ablation_matrix_compares_context_modes(self) -> None:
+        matrix = run_context_ablation_matrix(
+            cases_path=ROOT / "eval" / "bugfix_cases.json",
+            workspace_root=ROOT,
+            provider="hc-bench-oracle",
+            max_iterations=4,
+        )
+
+        self.assertEqual(
+            [item.profile_name for item in matrix],
+            [ablation.name for ablation in DEFAULT_CONTEXT_ABLATIONS],
+        )
+        self.assertTrue(all(len(item.results) == 1 for item in matrix))
+        self.assertTrue(matrix[0].results[0].metrics["context_injected_count"] > 0)
+        no_context = next(
+            item for item in matrix if item.profile_name == "no_context_compaction"
+        )
+        self.assertEqual(no_context.results[0].metrics["context_injected_count"], 0)
+
+        report = render_context_ablation_matrix(matrix)
+        self.assertIn("# HarnessCoder Context Ablation Matrix", report)
+        self.assertIn("Budget reductions", report)
+        self.assertIn("Dropped blocks", report)
+        self.assertIn("First target read step", report)
+        self.assertIn("no_policy_retry", report)
+
+    def test_context_ablation_matrix_accepts_model_profile(self) -> None:
+        matrix = run_context_ablation_matrix(
+            cases_path=ROOT / "eval" / "bugfix_cases.json",
+            workspace_root=ROOT,
+            profile=ModelProfile(name="oracle_profile", provider="hc-bench-oracle"),
+            max_iterations=4,
+        )
+
+        self.assertEqual(
+            [item.profile_name for item in matrix],
+            [ablation.name for ablation in DEFAULT_CONTEXT_ABLATIONS],
+        )
+        self.assertTrue(all(item.provider == "hc-bench-oracle" for item in matrix))
+        for item in matrix:
+            self.assertTrue(item.results)
+            self.assertEqual(
+                item.results[0].trace_summary["model_metadata"]["profile_name"],
+                "oracle_profile",
+            )
+
     def test_eval_report_splits_patch_and_agent_success(self) -> None:
         results = [
             _result(
@@ -156,6 +205,8 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("| Split breakdown | unspecified=3 |", report)
         self.assertIn("Patch success", matrix_report)
         self.assertIn("Patch ok / agent failed", matrix_report)
+        self.assertIn("Budget reductions", matrix_report)
+        self.assertIn("Dropped blocks", matrix_report)
         self.assertIn("Artifacts", matrix_report)
         self.assertIn("Artifact integrity", matrix_report)
         self.assertIn("Raw output chars", matrix_report)
@@ -198,7 +249,7 @@ class EvalMatrixTests(unittest.TestCase):
         )
         self.assertEqual(
             summary_row.count("|"),
-            "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |".count("|"),
+            "| Profile | Provider | Reasoning | Cases | Passed | Agent success | Patch success | Test pass | Verifier pass | Patch ok / agent failed | Avg tools | Repeated reads | Invalid calls | Policy denials | Tool failures | Context injected | Est. tokens | Budget reductions | Dropped blocks | Budget chars | Budget limit | Stable prefix changes | Memory updates | RepoMap used | RepoMap injected | Finish grace | Compression | Artifacts | Artifact integrity | Raw output chars | Output compression | Failure breakdown |".count("|"),
         )
 
     def test_eval_subprocess_redacts_sensitive_environment_output(self) -> None:
@@ -287,6 +338,26 @@ class EvalMatrixTests(unittest.TestCase):
             )
 
         self.assertEqual(code, 1)
+
+    def test_cli_context_ablations_return_zero_for_completed_experiment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "ablation.md"
+            code = main(
+                [
+                    "--provider",
+                    "hc-bench-oracle",
+                    "--eval",
+                    str(ROOT / "eval" / "bugfix_cases.json"),
+                    "--context-ablations",
+                    "--max-iterations",
+                    "4",
+                    "--eval-report",
+                    str(report_path),
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertIn("no_policy_retry", report_path.read_text(encoding="utf-8"))
 
 def _result(
     case_id: str,

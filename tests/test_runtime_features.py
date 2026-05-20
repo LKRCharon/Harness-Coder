@@ -9,7 +9,8 @@ from pathlib import Path
 
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.repo_map import build_repo_map
-from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.runner import AgentRunner, RunResult
+from harnesscoder.core.session import SessionStore
 from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.tools import ToolRegistry, ToolResult, redact_sensitive_text, safe_subprocess_env
@@ -518,6 +519,71 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertIn("app.py", _CaptureContextModel.last_payload)
         self.assertEqual(summary["metrics"]["repo_map_built_count"], 1)
         self.assertEqual(summary["metrics"]["repo_map_injected_count"], 1)
+
+    def test_runner_records_session_context_injection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                model=_CaptureContextModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+                context_mode="pack",
+            )
+            session_context = {
+                "session_id": "interview",
+                "turn_count": 1,
+                "summary": "1. user='inspect repo'; status=success",
+                "recent_turns": [
+                    {
+                        "turn_index": 1,
+                        "user_message": "inspect repo",
+                        "final_answer": "repo inspected",
+                        "status": "success",
+                        "run_id": "run_prev",
+                    }
+                ],
+            }
+
+            result = runner.run("Continue.", session_context=session_context)
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            run_started = next(record for record in records if record["type"] == "run_started")
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("repo inspected", _CaptureContextModel.last_payload)
+        self.assertEqual(run_started["session_id"], "interview")
+        self.assertEqual(summary["metrics"]["session_context_loaded_count"], 1)
+        self.assertEqual(summary["metrics"]["session_context_injected_count"], 1)
+
+    def test_session_store_persists_runs_and_builds_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SessionStore(Path(".harnesscoder/sessions"), root)
+            result = RunResult(
+                run_id="run_abc",
+                status="success",
+                final_answer="first answer",
+                trace_path=root / ".harnesscoder/runs/run_abc/trace.jsonl",
+            )
+
+            record = store.append_run(
+                "interview",
+                user_message="inspect repo",
+                result=result,
+            )
+            context = store.build_context("interview")
+            path = store.path_for("interview")
+            path_exists = path.is_file()
+
+        self.assertTrue(path_exists)
+        self.assertEqual(record.session_id, "interview")
+        self.assertEqual(context["turn_count"], 1)
+        self.assertEqual(context["recent_turns"][0]["run_id"], "run_abc")
+        self.assertIn("inspect repo", context["summary"])
 
     def test_finish_grace_accepts_finish_after_successful_tests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

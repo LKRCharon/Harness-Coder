@@ -229,6 +229,12 @@ def _metrics_summary(
         "tool_output_preview_chars": _tool_output_preview_chars(records),
         "context_packed_count": _event_count(records, "context_packed"),
         "context_injected_count": _context_injected_count(records),
+        "context_budget_reduced_count": _context_budget_reduced_count(records),
+        "context_budget_dropped_blocks": _context_budget_dropped_blocks(records),
+        "context_budget_total_chars": _context_budget_total(records, "total_chars"),
+        "context_budget_total_budget": _context_budget_total(records, "total_budget"),
+        "session_context_loaded_count": _event_count(records, "session_context_loaded"),
+        "session_context_injected_count": _session_context_injected_count(records),
         "estimated_context_tokens": _estimated_context_tokens(records),
         "stable_prefix_tokens": _prompt_section_tokens(records, "stable_prefix_tokens"),
         "dynamic_suffix_tokens": _prompt_section_tokens(records, "dynamic_suffix_tokens"),
@@ -394,6 +400,15 @@ def _context_injected_count(records: list[JsonRecord]) -> int:
     )
 
 
+def _session_context_injected_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and record.get("session_context_injected") is True
+    )
+
+
 def _estimated_context_tokens(records: list[JsonRecord]) -> int:
     total = 0
     for record in records:
@@ -401,6 +416,52 @@ def _estimated_context_tokens(records: list[JsonRecord]) -> int:
             continue
         total += _as_int(record.get("estimated_tokens"))
     return total
+
+
+def _context_budget_reduced_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "context_packed"
+        and _context_budget_reduced_sections(record)
+    )
+
+
+def _context_budget_dropped_blocks(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        total += _as_int(record.get("context_dropped_blocks"))
+        if "context_dropped_blocks" not in record:
+            budget = record.get("context_budget")
+            if isinstance(budget, dict):
+                total += _as_int(budget.get("dropped_blocks"))
+    return total
+
+
+def _context_budget_total(records: list[JsonRecord], key: str) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_packed":
+            continue
+        if f"context_budget_{key}" in record:
+            total += _as_int(record.get(f"context_budget_{key}"))
+            continue
+        budget = record.get("context_budget")
+        if isinstance(budget, dict):
+            total += _as_int(budget.get(key))
+    return total
+
+
+def _context_budget_reduced_sections(record: JsonRecord) -> list[str]:
+    sections = record.get("context_reduced_sections")
+    if isinstance(sections, list):
+        return [str(section) for section in sections]
+    budget = record.get("context_budget")
+    if isinstance(budget, dict) and isinstance(budget.get("reduced_sections"), list):
+        return [str(section) for section in budget["reduced_sections"]]
+    return []
 
 
 def _prompt_section_tokens(records: list[JsonRecord], key: str) -> int:

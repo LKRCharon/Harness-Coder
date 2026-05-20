@@ -1172,3 +1172,113 @@ This is the right way to answer "can you expand the benchmark?" The answer is
 not "add more toy questions"; it is "preserve the split, add distinct failure
 modes, keep oracle solvability, and make the new suite measurable through the
 same trace-backed report pipeline."
+
+## 1.3.0 Milestone
+
+### 48. Durable Sessions Without Turning HC Into A Chat Product
+
+Problem:
+HC already had task-internal multi-step agent loops, but user-level follow-up
+messages in the TUI were weak. The message pane showed prior messages, yet each
+normal user input started a fresh `AgentRunner.run(...)` with a new `run_id` and
+no durable cross-run context.
+
+Decision:
+Add a small `SessionStore` that persists bounded turn summaries under
+`.harnesscoder/sessions/<session_id>.json`. CLI can opt in with
+`--session <id>`, and TUI exposes `/session [id]` plus `/reset-session [id]`.
+Before a session-backed run starts, the runtime loads compact `session_context`
+and injects it through prompt assembly. The trace records `session_context_loaded`
+and `context_packed.session_context_injected`, and `AgentState` stores the
+session context so checkpoint/resume does not silently lose it.
+
+The boundary stays narrow:
+
+```text
+session JSON -> compact session_context -> fresh run_id and trace
+completed run -> append bounded turn summary back to session JSON
+```
+
+Interview angle:
+The accurate answer to "does HC have multi-turn conversation?" is now stronger:
+HC has task-internal multi-step loops and durable cross-run task sessions. It
+still does not claim to be a long-term chat memory product. The important part is
+that even conversation continuity is trace-backed and replay-visible.
+
+## 1.3.1 Milestone
+
+### 49. Context Budget v2 Makes Compaction Explainable
+
+Problem:
+HC already had `context_packed`, task-local memory, RepoMap injection, and
+compression metrics, but a skeptical interviewer could still ask: "how do you
+know the compaction did not silently drop the important part?" A single compact
+summary is not enough evidence.
+
+Decision:
+Add Context Budget v2 in prompt assembly. Each model-step context is split into
+named sections such as `system`, `task_contract`, `available_tools`,
+`packed_context`, `working_memory`, `repo_map`, `session_context`, and
+`recent_observations`. The task contract is preserved; lower-priority sections
+can be clipped or reduced. The `context_packed` trace records per-section
+`raw_chars`, final `chars`, `budget`, `preserved`, `reduced`, and
+`dropped_blocks`, plus aggregate budget totals.
+
+Replay and reports now aggregate:
+
+```text
+context_budget_reduced_count
+context_budget_dropped_blocks
+context_budget_total_chars
+context_budget_total_budget
+```
+
+Interview angle:
+The answer is no longer "we summarize context." The answer is "we budget context
+by section, preserve the current task contract, reduce lower-priority sections,
+and record each reduction into the append-only trace."
+
+## 1.3.2 Milestone
+
+### 50. Context Ablation Matrix Turns Governance Into An Eval Axis
+
+Problem:
+RepoMap, memory, and compaction are easy to oversell if they only appear as
+features. HC is an eval harness, so those features need a comparable report:
+same cases, same model, different context configuration.
+
+Decision:
+Add `--context-ablations` and a dedicated context ablation matrix. The default
+ablations are:
+
+```text
+full
+no_repomap
+no_memory
+no_context_compaction
+no_policy_retry
+```
+
+The report compares pass rate, agent/patch/test/verifier success, average tool
+calls, repeated reads, invalid calls, policy denials, tool failures,
+max-iteration failures, context injection count, estimated context tokens,
+budget reductions, dropped blocks, RepoMap use, first target read step, memory
+updates, compression count, and failure breakdown. The CLI accepts either a
+direct provider or one configured model profile as the model under test; it does
+not mix multi-profile comparison with context ablation in one table.
+
+Interview angle:
+This is the right way to answer "does RepoMap or memory actually help?" The
+answer is not subjective. HC can run a controlled ablation matrix and compare
+local behavior metrics from replay-backed traces.
+
+Release evidence boundary:
+The deterministic oracle context ablation is valid runtime evidence because it
+does not depend on an external model provider. The real-model `gpt55_high`
+context ablation run for this release is not a valid context-capability
+conclusion: most non-`full` cells failed as `model_error` before a tool action
+was produced, with provider-side HTTP 503/504/429 and response-format failures.
+Keep that report as instability evidence, but do not use it to claim
+`no_repomap`, `no_memory`, or `no_context_compaction` are worse. A follow-up
+release should split transient provider failures from action-parse failures and
+make retry/backoff visible in trace.

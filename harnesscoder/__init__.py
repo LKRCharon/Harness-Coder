@@ -1,3 +1,3 @@
 """HarnessCoder: a local event-sourced coding agent harness."""
 
-__version__ = "1.2.1"
+__version__ = "1.3.2"

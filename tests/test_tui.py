@@ -259,6 +259,53 @@ class TuiRenderLogicTests(unittest.TestCase):
         self.assertEqual(snapshot.context_mode, "memory")
         self.assertEqual(snapshot.repo_map_mode, "none")
 
+    def test_snapshot_config_preserves_session_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            config.session_id = "interview"
+            config.session_root = Path(".sessions")
+            tui = HarnessCoderTui(config)
+
+            snapshot = tui._snapshot_config()
+
+        self.assertEqual(snapshot.session_id, "interview")
+        self.assertEqual(snapshot.session_root, Path(".sessions"))
+
+    def test_session_command_switches_and_reports_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/session interview", screen)
+
+        self.assertEqual(tui.config.session_id, "interview")
+        self.assertTrue(any("session_id: interview" in message.text for message in tui.messages))
+
+    def test_reset_session_clears_session_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            tui = HarnessCoderTui(make_config(cwd))
+            store = tui._session_store()
+            store.append_run(
+                "default",
+                user_message="inspect repo",
+                result=RunResult(
+                    run_id="run_abc",
+                    status="success",
+                    final_answer="done",
+                    trace_path=cwd / ".harnesscoder/runs/run_abc/trace.jsonl",
+                ),
+            )
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/reset-session", screen)
+            context = store.build_context("default")
+
+        self.assertEqual(context["turn_count"], 0)
+        self.assertTrue(any("session reset: default" in message.text for message in tui.messages))
+
     def test_reasoning_command_updates_codex_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
@@ -307,6 +354,29 @@ class TuiRenderLogicTests(unittest.TestCase):
             ]
             run_started = next(event for event in events if event["type"] == "run_started")
             self.assertEqual(run_started["context_mode"], "pack")
+
+    def test_run_agent_background_persists_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            config.provider = "hc-bench-oracle"
+            config.context_mode = "pack"
+            config.session_id = "interview"
+            active = ActiveRun(
+                prompt="Finish immediately.",
+                config=config,
+                started_at=time.monotonic(),
+                known_traces=set(),
+            )
+            tui = HarnessCoderTui(config)
+
+            tui._run_agent_background(active)
+            context = tui._session_store(config).build_context("interview")
+
+        self.assertIsNone(active.error)
+        self.assertEqual(context["turn_count"], 1)
+        assert active.result is not None
+        self.assertEqual(context["recent_turns"][0]["run_id"], active.result.run_id)
 
     def test_direct_tool_large_output_uses_slash_artifact_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

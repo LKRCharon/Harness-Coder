@@ -28,12 +28,16 @@ DAG 或工作流框架可以用来组织 agent 外围的 eval pipeline，但 age
 
 ## 当前状态
 
-版本 `1.2.1` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
+版本 `1.3.2` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
 greenfield eval loop、HC-Bench-20/40、trace replay、eval report、model profile
 矩阵对比、上下文治理 prompt assembly、任务内 memory、compression metrics、
 轻量 RepoMap、checkpoint/resume，以及用于审计和回放的大工具输出 artifact
-存储。它也把训练 trace 收集和 live eval 区分开来：HC-Train-40 用于训练池，
-HC-Bench-20/40 用于 heldout/control 评测。
+存储。它还补上了跨 run 的 durable session，让 CLI/TUI 能处理“继续刚才那个
+任务”这类跟进消息，同时每次 agent run 仍然有独立 trace。1.3.1/1.3.2 又补上
+Context Budget v2 和 context ablation matrix，让上下文压缩、RepoMap、memory
+这些能力可以从 trace 里解释，也可以在报告里做消融对比。训练 trace 收集和
+live eval 仍然分开：HC-Train-40 用于训练池，HC-Bench-20/40 用于
+heldout/control 评测。
 
 当前包含：
 
@@ -52,6 +56,10 @@ HC-Bench-20/40 用于 heldout/control 评测。
   `artifacts/` 目录，带大小和 hash 元数据。
 - `context_packed`、`checkpoint_created`、`run_resumed`、`test_result` 等事件，
   用于可靠性回放。
+- `context_packed` 上的 Context Budget v2 字段，记录每个 section 的字符数、
+  预算、preserved/reduced 标记、丢弃 block 数和总预算使用量。
+- `.harnesscoder/sessions/<session_id>.json` 下的 durable session，以及
+  `session_context_loaded` trace 事件，用于跨 run 跟进任务。
 - `repo_map_built`、`repo_map_used` 事件，用于仓库级上下文治理。
 - 通过 `python -m harnesscoder.replay` 生成 trace replay summary。
 - 一个最小 eval harness：复制 fixture、运行 agent、执行测试、评分并生成
@@ -77,9 +85,11 @@ HC-Bench-20/40 用于 heldout/control 评测。
 python -m harnesscoder "看一下这个 repo 是做什么的"
 python -m harnesscoder --replay .harnesscoder/runs/<run_id>/trace.jsonl
 python -m harnesscoder --resume .harnesscoder/runs/<run_id>/checkpoint.json
+python -m harnesscoder --session interview "继续刚才那个 repo 解释"
 python -m harnesscoder --eval eval/cases.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json
 python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_40.json
+python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json --context-ablations
 ```
 
 当前 scripted model 会做一个小型 repo orientation：搜索项目相关信息、读取
@@ -111,10 +121,14 @@ python -m harnesscoder --tui
 /test python -m unittest discover -s tests
 /run git status --short
 /trace latest
+/session interview
+/reset-session
 ```
 
 当前 TUI 定位很小：它只是 runtime 和 eval harness 的本地控制台，不是完整的
-Claude Code clone。
+Claude Code clone。它现在支持 durable session：`/session <id>` 切换会话，
+每个完成的 run 会把有限 turn 摘要写入 `.harnesscoder/sessions/`，下一次 run
+会把 session context 通过同一套 prompt/trace 链路注入模型。
 
 这个控制台现在通过一个小型 runtime control plane 做运行控制，而不是把逻辑
 散落在 TUI 分支里。active run 期间会阻止会改变状态的命令，只保留 `/help`、
@@ -147,6 +161,13 @@ python -m harnesscoder \
   --repo-map-mode none \
   "inspect this repo"
 ```
+
+每次模型调用前，`context_packed` trace 都会记录 Context Budget v2：每个 section
+的 `raw_chars`、最终 `chars`、`budget`、`preserved`、`reduced` 和
+`dropped_blocks`。当前任务契约会强保留；observations、packed context、session
+context、RepoMap、working memory 这类低优先级 section 可以被裁剪或减少。Replay
+和 eval report 会聚合 budget reductions、dropped blocks、总 context chars 和总
+budget。
 
 ## OpenAI-Compatible Providers
 
@@ -219,6 +240,7 @@ CLI 从仓库启动时，会自动加载当前目录和 `--cwd` 目录下的 `.e
 至少包含：
 
 - `run_started`
+- `session_context_loaded`
 - `context_packed`
 - `model_action`
 - `policy_decision`
@@ -231,6 +253,23 @@ CLI 从仓库启动时，会自动加载当前目录和 `--cwd` 目录下的 `.e
 
 这些 trace 是 append-only JSONL，后续 replay 和 eval 代码可以直接消费它们，而
 不依赖运行时内存状态。
+
+`context_packed` 还会携带 `context_budget`，例如：
+
+```json
+{
+  "type": "context_packed",
+  "context_budget": {
+    "version": 2,
+    "sections": {
+      "task_contract": {"chars": 250, "budget": 2400, "preserved": true},
+      "packed_context": {"raw_chars": 21000, "chars": 15900, "budget": 16000, "reduced": true}
+    },
+    "reduced_sections": ["packed_context"],
+    "dropped_blocks": 2
+  }
+}
+```
 
 ## 开发过程笔记
 
@@ -247,7 +286,10 @@ CLI 从仓库启动时，会自动加载当前目录和 `--cwd` 目录下的 `.e
 [docs/spec-1.1.0.md](docs/spec-1.1.0.md) 和
 [docs/spec-1.2.0.md](docs/spec-1.2.0.md)；1.2.1 的 HC-Bench-40、run-control
 和 reasoning-strength 范围见
-[docs/spec-1.2.1.md](docs/spec-1.2.1.md)。1.1 的 prompt caching 背景总结见
+[docs/spec-1.2.1.md](docs/spec-1.2.1.md)；1.3.0 的 durable session 范围见
+[docs/spec-1.3.0.md](docs/spec-1.3.0.md)，1.3.1 的 Context Budget v2 范围见
+[docs/spec-1.3.1.md](docs/spec-1.3.1.md)，1.3.2 的 context ablation matrix 范围见
+[docs/spec-1.3.2.md](docs/spec-1.3.2.md)。1.1 的 prompt caching 背景总结见
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md)。
 
 ## Replay And Eval
@@ -334,9 +376,9 @@ python -m harnesscoder \
 
 matrix report 会比较 pass rate、test pass rate、verifier pass rate、平均工具调用、
 重复读取、非法调用、策略拒绝、工具失败、memory/compression 指标、RepoMap
-使用/注入指标、observation artifact 指标和 failure category。每个 profile/case
-仍然保留自己的 trace 和 artifact 目录。如果真实模型 profile 初始化失败，matrix
-会记录失败原因，而不是静默跳过。
+使用/注入指标、context budget reductions、dropped blocks、observation artifact
+指标和 failure category。每个 profile/case 仍然保留自己的 trace 和 artifact 目录。
+如果真实模型 profile 初始化失败，matrix 会记录失败原因，而不是静默跳过。
 
 比较 context modes：
 
@@ -382,6 +424,23 @@ python -m harnesscoder \
   --eval eval/hc_bench_20.json \
   --eval-report .harnesscoder/reports/hc-bench-20-with-repo-map.md
 ```
+
+运行内置 context ablation matrix：
+
+```bash
+python -m harnesscoder \
+  --provider hc-bench-oracle \
+  --eval eval/hc_bench_20.json \
+  --context-ablations \
+  --max-iterations 8 \
+  --eval-report .harnesscoder/reports/hc-bench-20-context-ablations.md
+```
+
+ablation matrix 会在同一批 case 上比较 `full`、`no_repomap`、`no_memory`、
+`no_context_compaction` 和 `no_policy_retry`，并报告 pass rate、工具调用、
+repeated reads、invalid calls、policy denials、max_iterations、context tokens、
+budget reductions、dropped blocks、RepoMap use、first target read step、memory
+updates、compression 和 failure breakdown。
 
 用 deterministic local oracle 运行 HC-Bench-20：
 
@@ -455,5 +514,6 @@ comparison。
 ## 近期 TODO
 
 - 改进 TUI 的历史导航和 trace inspection 命令。
+- 增加 session-aware eval cases，衡量跨 run 跟进任务质量。
 - 在 `replay/` 下增加更丰富的 failure replay fixtures。
 - 当 provider 返回 usage data 时，补充 token/cost accounting。
