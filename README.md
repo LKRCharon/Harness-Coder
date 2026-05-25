@@ -30,7 +30,7 @@ policy-gated loop.
 
 ## Current Status
 
-Version `1.3.2` is a runnable local runtime with real bugfix and minimal
+Version `1.3.3` is a runnable local runtime with real bugfix and minimal
 greenfield eval loops, HC-Bench-20/40, trace replay, eval reporting,
 model-profile comparison, context-governed prompt assembly, task-local memory,
 compression metrics, lightweight RepoMap, checkpoint/resume support, and a
@@ -38,8 +38,10 @@ large-output artifact store for audit/replay. It also adds durable cross-run
 sessions for CLI/TUI follow-up tasks while keeping each agent run separately
 traceable. The 1.3.1/1.3.2 slices add Context Budget v2 and a context ablation
 matrix so prompt compaction and RepoMap/memory behavior can be inspected from
-trace and compared in reports. Training trace collection remains separate from
-live evaluation through HC-Train-40 and HC-Bench-20/40. It includes:
+trace and compared in reports. The 1.3.3 slice tightens real-model eval hygiene
+with tolerant action parsing, reproducible Python subprocess commands, and
+trace-visible model retry metrics. Training trace collection remains separate
+from live evaluation through HC-Train-40 and HC-Bench-20/40. It includes:
 
 - A `ScriptedModel` that simulates model actions without calling a real LLM.
 - Tool execution for:
@@ -305,7 +307,8 @@ HC-Bench-40 / run-control / reasoning-strength release is scoped in
 [docs/spec-1.2.1.md](docs/spec-1.2.1.md). The 1.3.0 durable session release is
 scoped in [docs/spec-1.3.0.md](docs/spec-1.3.0.md), Context Budget v2 is scoped
 in [docs/spec-1.3.1.md](docs/spec-1.3.1.md), and the context ablation matrix is
-scoped in [docs/spec-1.3.2.md](docs/spec-1.3.2.md). The Claude Code
+scoped in [docs/spec-1.3.2.md](docs/spec-1.3.2.md). Real-model eval hygiene is
+scoped in [docs/spec-1.3.3.md](docs/spec-1.3.3.md). The Claude Code
 prompt caching note that motivated 1.1 is summarized in
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md).
 

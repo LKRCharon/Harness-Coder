@@ -240,6 +240,7 @@ def _metrics_summary(
         "dynamic_suffix_tokens": _prompt_section_tokens(records, "dynamic_suffix_tokens"),
         "stable_prefix_change_count": _stable_prefix_change_count(records),
         "memory_updated_count": _event_count(records, "memory_updated"),
+        "model_retry_count": _event_count(records, "model_retry"),
         "repo_map_built_count": _event_count(records, "repo_map_built"),
         "repo_map_used_count": _event_count(records, "repo_map_used"),
         "repo_map_injected_count": _repo_map_injected_count(records),

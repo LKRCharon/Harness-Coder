@@ -21,6 +21,47 @@ MODEL_TOOL_NAMES = (
     "run_tests",
     "run_command",
 )
+TOOL_NAME_ALIASES = {
+    "read": "read_file",
+    "readfile": "read_file",
+    "read_file": "read_file",
+    "search": "search_code",
+    "search_code": "search_code",
+    "searchcode": "search_code",
+    "grep": "search_code",
+    "repo_map": "repo_map",
+    "repomap": "repo_map",
+    "repo-map": "repo_map",
+    "write": "write_file",
+    "write_file": "write_file",
+    "writefile": "write_file",
+    "create_file": "write_file",
+    "createfile": "write_file",
+    "edit": "edit_file",
+    "edit_file": "edit_file",
+    "editfile": "edit_file",
+    "replace": "edit_file",
+    "run_test": "run_tests",
+    "run_tests": "run_tests",
+    "runtests": "run_tests",
+    "test": "run_tests",
+    "pytest": "run_tests",
+    "unittest": "run_tests",
+    "run_command": "run_command",
+    "runcommand": "run_command",
+    "command": "run_command",
+    "shell": "run_command",
+    "bash": "run_command",
+}
+TOOL_ARG_KEYS = {
+    "read_file": ("path", "offset", "limit"),
+    "search_code": ("query", "path"),
+    "repo_map": ("query", "max_tokens", "refresh"),
+    "write_file": ("path", "content", "overwrite"),
+    "edit_file": ("path", "old", "new"),
+    "run_tests": ("cmd", "command", "timeout"),
+    "run_command": ("cmd", "command", "timeout"),
+}
 REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 REASONING_EFFORT_CHOICES = ("none", *REASONING_EFFORTS)
 
@@ -210,6 +251,7 @@ class OpenAIChatModel:
     base_url: str = "https://api.openai.com/v1"
     timeout: int = 60
     max_output_tokens: int = 1200
+    extra_body: dict[str, Any] | None = None
     name: str = "openai-chat"
 
     def __post_init__(self) -> None:
@@ -241,13 +283,16 @@ class OpenAIChatModel:
                 },
             ]
         )
-        return {
+        payload = {
             "model": self.model,
             "messages": messages,
             "temperature": 0,
             "max_tokens": self.max_output_tokens,
             "stream": False,
         }
+        if self.extra_body:
+            payload.update(self.extra_body)
+        return payload
 
     def _post_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _post_json(
@@ -263,6 +308,7 @@ class OpenAIChatModel:
             "model": self.model,
             "base_url": self.base_url,
             "max_output_tokens": self.max_output_tokens,
+            "extra_body": _safe_metadata(self.extra_body) if self.extra_body else {},
         }
 
 
@@ -351,6 +397,26 @@ def reasoning_payload_for_responses(effort: str | None) -> dict[str, str] | None
     return {"effort": effective, "summary": "auto"}
 
 
+def _safe_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): ("<redacted>" if _looks_secret(str(key)) else _safe_metadata(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_safe_metadata(item) for item in value]
+    if isinstance(value, tuple):
+        return [_safe_metadata(item) for item in value]
+    if isinstance(value, str | int | float | bool) or value is None:
+        return value
+    return str(value)
+
+
+def _looks_secret(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in ("api_key", "apikey", "secret", "token"))
+
+
 def _post_json(
     *,
     url: str,
@@ -433,42 +499,34 @@ def _extract_response_text(response: dict[str, Any]) -> str:
     choices = response.get("choices", [])
     if choices and isinstance(choices[0], dict):
         message = choices[0].get("message", {})
-        if isinstance(message, dict) and isinstance(message.get("content"), str):
-            return message["content"]
+        if isinstance(message, dict):
+            tool_call_text = _text_from_chat_tool_call(message)
+            if tool_call_text is not None:
+                return tool_call_text
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                text = _text_from_content_blocks(content)
+                if text:
+                    return text
 
     raise ModelAdapterError("model API response did not include text output")
 
 
 def _parse_action_json(text: str) -> dict[str, Any]:
     stripped = text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL)
-    if fenced:
-        stripped = fenced.group(1).strip()
-
-    if not stripped.startswith("{"):
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start >= 0 and end > start:
-            stripped = stripped[start : end + 1]
-
-    decoder = json.JSONDecoder()
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        try:
-            parsed, _ = decoder.raw_decode(stripped)
-        except json.JSONDecodeError as exc:
-            raise ModelAdapterError(
-                f"model did not return valid action JSON: {text}"
-            ) from exc
-
-    if not isinstance(parsed, dict):
-        raise ModelAdapterError("model action JSON must be an object")
-    return parsed
+    candidates = _action_json_candidates(stripped)
+    for candidate in candidates:
+        if _looks_like_action_payload(candidate):
+            return candidate
+    if candidates:
+        return candidates[0]
+    raise ModelAdapterError(f"model did not return valid action JSON: {text}")
 
 
 def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
-    payload = _normalize_action_payload(payload)
+    payload = _normalize_action_payload(_unwrap_action_payload(payload))
     kind = payload.get("kind")
     rationale = payload.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
@@ -505,8 +563,11 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_action = normalized.get("action")
 
     if not isinstance(raw_kind, str) or not raw_kind.strip():
-        raw_kind = raw_action if isinstance(raw_action, str) else None
+        raw_kind = raw_action if isinstance(raw_action, str) else normalized.get("type")
     kind = raw_kind.strip().lower() if isinstance(raw_kind, str) else None
+
+    if isinstance(kind, str):
+        kind = _normalize_tool_name(kind) or kind
 
     if kind in MODEL_TOOL_NAMES:
         normalized["kind"] = "tool"
@@ -522,6 +583,8 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(value, str) and value.strip():
                 normalized["tool_name"] = value.strip()
                 break
+    if isinstance(normalized.get("tool_name"), str):
+        normalized["tool_name"] = _normalize_tool_name(str(normalized["tool_name"]))
 
     tool_args = normalized.get("tool_args")
     if not isinstance(tool_args, dict):
@@ -530,18 +593,195 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(value, dict):
                 normalized["tool_args"] = value
                 break
+            if isinstance(value, str):
+                parsed_value = _parse_argument_object(value)
+                if parsed_value is not None:
+                    normalized["tool_args"] = parsed_value
+                    break
+                parsed_value = _parse_argument_string(
+                    normalized.get("tool_name"),
+                    value,
+                )
+                if parsed_value is not None:
+                    normalized["tool_args"] = parsed_value
+                    break
 
     if normalized.get("kind") is None and isinstance(normalized.get("tool_name"), str):
         normalized["kind"] = "tool"
 
+    if normalized.get("kind") == "tool":
+        normalized["tool_args"] = _fill_tool_args_from_top_level(normalized)
+
     if normalized.get("kind") == "finish" and "content" not in normalized:
-        for key in ("final_answer", "answer", "message", "summary"):
+        for key in ("final_answer", "answer", "message", "summary", "result"):
             value = normalized.get(key)
             if isinstance(value, str):
                 normalized["content"] = value
                 break
 
     return normalized
+
+
+def _text_from_chat_tool_call(message: dict[str, Any]) -> str | None:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return None
+    first = tool_calls[0]
+    if not isinstance(first, dict):
+        return None
+    function = first.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    arguments = function.get("arguments")
+    payload = {
+        "kind": "tool",
+        "tool_name": name,
+        "tool_args": _parse_argument_object(arguments)
+        if isinstance(arguments, str)
+        else arguments,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _text_from_content_blocks(content: list[Any]) -> str:
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text") or block.get("content")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _action_json_candidates(text: str) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    decoder = json.JSONDecoder()
+
+    for fenced in re.finditer(r"```(?:json|JSON)?\s*(.*?)\s*```", text, flags=re.DOTALL):
+        _append_json_candidate(candidates, seen, fenced.group(1).strip(), decoder)
+
+    _append_json_candidate(candidates, seen, text, decoder)
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        _append_json_candidate(candidates, seen, text[index:], decoder)
+    return candidates
+
+
+def _append_json_candidate(
+    candidates: list[dict[str, Any]],
+    seen: set[str],
+    text: str,
+    decoder: json.JSONDecoder,
+) -> None:
+    if not text:
+        return
+    try:
+        parsed, _ = decoder.raw_decode(text)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(parsed, dict):
+        return
+    key = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    if key in seen:
+        return
+    candidates.append(parsed)
+    seen.add(key)
+
+
+def _unwrap_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    for key in ("next_action", "model_action", "decision", "response"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return _unwrap_action_payload(value)
+
+    action = payload.get("action")
+    if isinstance(action, dict):
+        merged = dict(action)
+        if "rationale" not in merged and isinstance(payload.get("rationale"), str):
+            merged["rationale"] = payload["rationale"]
+        return _unwrap_action_payload(merged)
+
+    function_call = payload.get("function_call")
+    if isinstance(function_call, dict):
+        return _function_call_payload(function_call, payload)
+
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        first = tool_calls[0]
+        if isinstance(first, dict):
+            function = first.get("function")
+            if isinstance(function, dict):
+                return _function_call_payload(function, payload)
+    return payload
+
+
+def _function_call_payload(function: dict[str, Any], parent: dict[str, Any]) -> dict[str, Any]:
+    arguments = function.get("arguments")
+    return {
+        "kind": "tool",
+        "tool_name": function.get("name"),
+        "tool_args": (
+            _parse_argument_object(arguments)
+            if isinstance(arguments, str)
+            else arguments
+        ),
+        "rationale": parent.get("rationale") or parent.get("reasoning") or "Tool call response.",
+    }
+
+
+def _looks_like_action_payload(payload: dict[str, Any]) -> bool:
+    normalized = _normalize_action_payload(_unwrap_action_payload(payload))
+    kind = normalized.get("kind")
+    if kind == "finish":
+        return True
+    return kind == "tool" and normalized.get("tool_name") in MODEL_TOOL_NAMES
+
+
+def _normalize_tool_name(value: str) -> str:
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return TOOL_NAME_ALIASES.get(key, key)
+
+
+def _parse_argument_object(value: str) -> dict[str, Any] | None:
+    stripped = value.strip()
+    if not stripped:
+        return {}
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_argument_string(tool_name: Any, value: str) -> dict[str, Any] | None:
+    if tool_name not in {"run_tests", "run_command"}:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return {"cmd": stripped}
+
+
+def _fill_tool_args_from_top_level(payload: dict[str, Any]) -> dict[str, Any]:
+    tool_args = payload.get("tool_args")
+    tool_name = payload.get("tool_name")
+    if not isinstance(tool_name, str):
+        return {} if not isinstance(tool_args, dict) else tool_args
+    args = dict(tool_args) if isinstance(tool_args, dict) else {}
+    for key in TOOL_ARG_KEYS.get(tool_name, ()):
+        if key in payload:
+            target_key = "cmd" if key == "command" else key
+            args[target_key] = payload[key]
+    if tool_name in {"run_tests", "run_command"} and "cmd" not in args:
+        command = args.get("command")
+        if isinstance(command, str):
+            args["cmd"] = command
+            args.pop("command", None)
+    return args
 
 
 def _clip(text: str, limit: int) -> str:

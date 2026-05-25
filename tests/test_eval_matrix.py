@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,6 +63,27 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertEqual(profiles["gpt"].reasoning_effort, "xhigh")
         self.assertEqual(profiles["deepseek"].provider, "openai-chat")
         self.assertEqual(profiles["deepseek"].api_key_env, "DEEPSEEK_API_KEY")
+
+    def test_openai_chat_profile_accepts_extra_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "models.toml"
+            config.write_text(
+                "[models.qwen3]\n"
+                'provider = "openai-chat"\n'
+                'model = "qwen3-8b"\n'
+                'base_url = "http://127.0.0.1:18000/v1"\n'
+                "\n"
+                "[models.qwen3.extra_body.chat_template_kwargs]\n"
+                "enable_thinking = false\n",
+                encoding="utf-8",
+            )
+
+            profiles = load_model_profiles(config)
+
+        self.assertEqual(
+            profiles["qwen3"].extra_body,
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        )
 
     def test_openai_chat_profile_rejects_reasoning_effort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -277,6 +300,40 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertIn("None", result.stdout)
         self.assertNotIn("super-secret-value", result.stdout)
         self.assertIn("OPENAI_API_KEY=[REDACTED]", result.stdout)
+
+    def test_eval_subprocess_uses_current_interpreter_for_python_command(self) -> None:
+        previous_path = os.environ.get("PATH", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_python = fake_bin / "python"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "echo fake python should not run >&2\n"
+                "exit 42\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(
+                fake_python.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{previous_path}"
+            try:
+                result = _run_command_for_eval(
+                    "python -c \"import sys; print(sys.version_info[0])\"",
+                    root,
+                    10,
+                )
+            finally:
+                os.environ["PATH"] = previous_path
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "3")
+        self.assertNotIn("fake python should not run", result.stderr)
 
     def test_fixture_eval_trace_root_is_relative_to_workspace_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

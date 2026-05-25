@@ -9,7 +9,7 @@ This roadmap is intentionally conservative. The project should not grow into a
 generic multi-agent framework, a LangGraph clone, or a web UI before the single
 agent runtime is demonstrably reliable.
 
-## Current Release: 1.3.2
+## Current Release: 1.3.3
 
 The 1.3 line keeps the 1.0 interview-ready runtime, the 1.1
 prompt-cache-aware context governance, and the 1.2 train/eval boundary. It adds
@@ -43,6 +43,9 @@ evidence with Context Budget v2 and a context ablation matrix:
 - Replay/report metrics for context budget reductions and dropped blocks.
 - Built-in `--context-ablations` eval matrix across `full`, `no_repomap`,
   `no_memory`, `no_context_compaction`, and `no_policy_retry`.
+- Real-model eval hygiene for OpenAI-compatible endpoints, including tolerant
+  action parsing, reproducible Python subprocess execution, and trace/report
+  metrics for model retries.
 
 ### 1.3.x Quality Work
 

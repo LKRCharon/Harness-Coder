@@ -22,7 +22,11 @@ from harnesscoder.core.models import (
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
 from harnesscoder.core.runner import AgentRunner, RepoMapMode
-from harnesscoder.core.tools import redact_sensitive_text, safe_subprocess_env
+from harnesscoder.core.tools import (
+    normalize_python_command,
+    redact_sensitive_text,
+    safe_subprocess_env,
+)
 from harnesscoder.model_profiles import ModelProfile
 from harnesscoder.replay import summarize_trace
 
@@ -462,6 +466,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
     dynamic_suffix_tokens = _sum_metric(results, "dynamic_suffix_tokens")
     stable_prefix_changes = _sum_metric(results, "stable_prefix_change_count")
     memory_updates = _sum_metric(results, "memory_updated_count")
+    model_retries = _sum_metric(results, "model_retry_count")
     repo_map_built = _sum_metric(results, "repo_map_built_count")
     repo_map_used = _sum_metric(results, "repo_map_used_count")
     repo_map_injected = _sum_metric(results, "repo_map_injected_count")
@@ -521,6 +526,7 @@ def render_markdown_report(results: list[EvalResult]) -> str:
         f"| Dynamic suffix tokens | {dynamic_suffix_tokens} |",
         f"| Stable prefix changes | {stable_prefix_changes} |",
         f"| Memory updates | {memory_updates} |",
+        f"| Model retries | {model_retries} |",
         f"| RepoMap builds | {repo_map_built} |",
         f"| RepoMap uses | {repo_map_used} |",
         f"| RepoMap injections | {repo_map_injected} |",
@@ -1174,6 +1180,7 @@ def _run_command_for_eval(
             timed_out=False,
             duration_seconds=time.monotonic() - started,
         )
+    parts = normalize_python_command(parts)
 
     env = safe_subprocess_env({"PYTHONUTF8": "1", **(extra_env or {})})
     try:
@@ -1624,6 +1631,7 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         "dynamic_suffix_tokens",
         "stable_prefix_change_count",
         "memory_updated_count",
+        "model_retry_count",
         "compression_count",
         "hot_observation_count",
         "cold_summary_chars",

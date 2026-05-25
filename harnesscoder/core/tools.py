@@ -526,6 +526,7 @@ class ToolRegistry:
                 )
             if not parts:
                 return ToolResult(call_id, tool_name, False, "", "cmd parsed to no arguments")
+            parts = normalize_python_command(parts)
         else:
             return ToolResult(
                 call_id,
@@ -690,6 +691,22 @@ def redact_sensitive_text(text: str) -> str:
 def is_sensitive_env_name(name: str) -> bool:
     upper = name.upper().replace("-", "_")
     return any(marker in upper for marker in SENSITIVE_ENV_MARKERS)
+
+
+def normalize_python_command(parts: list[str]) -> list[str]:
+    if not parts:
+        return parts
+    head = parts[0]
+    if head in {"python", "python3"} or _is_python_version_head(head):
+        return [sys.executable, *parts[1:]]
+    return parts
+
+
+def _is_python_version_head(head: str) -> bool:
+    if not head.startswith("python3."):
+        return False
+    suffix = head[len("python3.") :]
+    return bool(suffix) and all(part.isdigit() for part in suffix.split("."))
 
 
 def _is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:

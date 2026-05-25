@@ -14,7 +14,12 @@ from harnesscoder.core.checkpoint import (
 )
 from harnesscoder.core.context import build_context_pack
 from harnesscoder.core.memory import apply_memory_reducer, memory_blocks_to_records
-from harnesscoder.core.models import MODEL_SYSTEM_PROMPT, MODEL_TOOL_NAMES, ModelAdapter
+from harnesscoder.core.models import (
+    MODEL_SYSTEM_PROMPT,
+    MODEL_TOOL_NAMES,
+    ModelAdapter,
+    ModelAdapterError,
+)
 from harnesscoder.core.policy import PolicyDecision, ToolPolicy
 from harnesscoder.core.prompt import ContextMode, assemble_context
 from harnesscoder.core.repo_map import RepoMapCache
@@ -181,7 +186,12 @@ class AgentRunner:
             )
 
             try:
-                action = self._next_model_action(state, context)
+                action = self._next_model_action_with_retry(
+                    state,
+                    context,
+                    trace,
+                    reason="model_step",
+                )
             except Exception as exc:
                 status = "model_error"
                 answer = f"Model adapter failed: {type(exc).__name__}: {exc}"
@@ -314,7 +324,12 @@ class AgentRunner:
                     **context.to_trace_record(),
                     **context_pack,
                 )
-                action = self._next_model_action(state, context)
+                action = self._next_model_action_with_retry(
+                    state,
+                    context,
+                    trace,
+                    reason="finish_grace",
+                )
             except Exception as exc:
                 trace.emit(
                     "finish_grace_result",
@@ -399,6 +414,30 @@ class AgentRunner:
         if not has_varargs and len(positional) <= 1:
             return method(state)  # type: ignore[call-arg]
         return method(state, context)  # type: ignore[misc]
+
+    def _next_model_action_with_retry(
+        self,
+        state: AgentState,
+        context: object,
+        trace: TraceWriter,
+        *,
+        reason: str,
+    ) -> ModelAction:
+        try:
+            return self._next_model_action(state, context)
+        except ModelAdapterError as exc:
+            if not _is_retryable_model_adapter_error(exc):
+                raise
+            trace.emit(
+                "model_retry",
+                reason=reason,
+                attempt=1,
+                max_retries=1,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                state=state.snapshot(),
+            )
+            return self._next_model_action(state, context)
 
     def _attach_tool_metadata(
         self,
@@ -524,3 +563,21 @@ def _session_turn_count(session_context: dict[str, Any] | None) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _is_retryable_model_adapter_error(exc: ModelAdapterError) -> bool:
+    message = str(exc)
+    retryable_markers = (
+        "model API response did not include text output",
+        "model did not return valid action JSON:",
+        "model API request failed:",
+        "model API returned HTTP 408:",
+        "model API returned HTTP 409:",
+        "model API returned HTTP 429:",
+        "model API returned HTTP 500:",
+        "model API returned HTTP 502:",
+        "model API returned HTTP 503:",
+        "model API returned HTTP 504:",
+        "model API returned non-JSON response:",
+    )
+    return any(marker in message for marker in retryable_markers)

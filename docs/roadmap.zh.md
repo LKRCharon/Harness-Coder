@@ -8,7 +8,7 @@ HarnessCoder 的路线只围绕一个核心判断：
 所以 1.0 之后也不应该马上扩成多 agent 平台、LangGraph/DAG 框架或 Web UI。
 路线重点仍然是把单 agent runtime 的证据链做扎实。
 
-## 当前版本：1.3.2
+## 当前版本：1.3.3
 
 1.3 保留 1.0 的可展示、可复现基线、1.1 的 prompt-cache-aware 上下文治理、
 1.2 的 train/eval 边界，并补上跨 run 跟进任务需要的 durable session。随后
@@ -39,6 +39,8 @@ ablation matrix 进入 eval report。
 - Replay/report 聚合 context budget reductions 和 dropped blocks。
 - 内置 `--context-ablations`，比较 `full`、`no_repomap`、`no_memory`、
   `no_context_compaction` 和 `no_policy_retry`。
+- 真实模型 eval hygiene：兼容常见 OpenAI-compatible 输出形态、规范化 Python
+  子进程命令，并在 trace/report 中记录 model retry 指标。
 
 ### 1.3.x 打磨重点
 

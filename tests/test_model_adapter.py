@@ -11,6 +11,7 @@ from harnesscoder.core.models import (
     OpenAICodexModel,
     _extract_response_text,
     _model_action_from_payload,
+    _parse_action_json,
 )
 from harnesscoder.core.prompt import assemble_context
 from harnesscoder.core.state import AgentState, ToolObservation
@@ -50,6 +51,77 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
 
         self.assertEqual(action.kind, "finish")
         self.assertEqual(action.content, "All tests pass.")
+
+    def test_extracts_action_json_after_reasoning_text(self) -> None:
+        payload = _parse_action_json(
+            "I will inspect the file first.\n"
+            '{"kind":"tool","tool_name":"read_file","tool_args":{"path":"app.py"}}'
+        )
+        action = _model_action_from_payload(payload)
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "read_file")
+        self.assertEqual(action.tool_args, {"path": "app.py"})
+
+    def test_prefers_action_like_json_over_explanatory_json(self) -> None:
+        payload = _parse_action_json(
+            '{"note":"analysis only"}\n'
+            "Now the action:\n"
+            '{"kind":"tool","tool_name":"search","query":"def solve"}'
+        )
+        action = _model_action_from_payload(payload)
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "search_code")
+        self.assertEqual(action.tool_args, {"query": "def solve"})
+
+    def test_accepts_wrapped_next_action_payload(self) -> None:
+        action = _model_action_from_payload(
+            {
+                "next_action": {
+                    "action": {
+                        "type": "tool",
+                        "name": "run_test",
+                        "arguments": {"command": "python -m unittest discover"},
+                    },
+                    "rationale": "Verify the fix.",
+                }
+            }
+        )
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "run_tests")
+        self.assertEqual(action.tool_args, {"cmd": "python -m unittest discover"})
+
+    def test_accepts_type_field_and_string_command_arguments(self) -> None:
+        action = _model_action_from_payload(
+            {
+                "type": "tool",
+                "tool": "bash",
+                "arguments": "python -m unittest discover",
+            }
+        )
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "run_command")
+        self.assertEqual(action.tool_args, {"cmd": "python -m unittest discover"})
+
+    def test_accepts_top_level_tool_arguments(self) -> None:
+        action = _model_action_from_payload(
+            {
+                "kind": "edit",
+                "path": "app.py",
+                "old": "return 1",
+                "new": "return 2",
+            }
+        )
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "edit_file")
+        self.assertEqual(
+            action.tool_args,
+            {"path": "app.py", "old": "return 1", "new": "return 2"},
+        )
 
     def test_hc_bench_oracle_reads_case_id_from_task(self) -> None:
         state = AgentState(
@@ -379,6 +451,37 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("packed_context", payload["messages"][1]["content"])
         self.assertEqual(model.base_url, "https://api.deepseek.com/v1")
 
+    def test_openai_chat_payload_includes_extra_body(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Inspect this repo.",
+            cwd=".",
+            max_iterations=4,
+        )
+        model = OpenAIChatModel(
+            api_key="sk-test",
+            model="qwen3-8b",
+            base_url="http://127.0.0.1:18000/v1",
+            extra_body={
+                "chat_template_kwargs": {"enable_thinking": False},
+                "secret_token": "should-not-leak",
+            },
+        )
+
+        payload = model._build_payload(state)
+        metadata = model.model_metadata()
+
+        self.assertEqual(
+            payload["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
+        self.assertEqual(payload["secret_token"], "should-not-leak")
+        self.assertEqual(
+            metadata["extra_body"]["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
+        self.assertEqual(metadata["extra_body"]["secret_token"], "<redacted>")
+
     def test_extracts_chat_completion_text(self) -> None:
         text = _extract_response_text(
             {
@@ -393,6 +496,31 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         )
 
         self.assertIn('"kind":"finish"', text)
+
+    def test_extracts_chat_completion_tool_call(self) -> None:
+        text = _extract_response_text(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_test",
+                                        "arguments": '{"command":"python -m unittest"}',
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+        action = _model_action_from_payload(_parse_action_json(text))
+
+        self.assertEqual(action.kind, "tool")
+        self.assertEqual(action.tool_name, "run_tests")
+        self.assertEqual(action.tool_args, {"cmd": "python -m unittest"})
 
     def test_system_prompt_lists_every_runtime_tool(self) -> None:
         for tool_name in MODEL_TOOL_NAMES:

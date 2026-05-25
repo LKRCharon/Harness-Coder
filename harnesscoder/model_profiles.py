@@ -26,6 +26,7 @@ class ModelProfile:
     timeout: int = 60
     max_output_tokens: int = 1200
     reasoning_effort: str | None = None
+    extra_body: dict[str, Any] | None = None
 
     @classmethod
     def from_record(cls, name: str, record: dict[str, Any]) -> "ModelProfile":
@@ -35,6 +36,7 @@ class ModelProfile:
         api_key_env = _optional_str(record, "api_key_env") or "OPENAI_API_KEY"
         timeout = _optional_int(record, "timeout", 60)
         max_output_tokens = _optional_int(record, "max_output_tokens", 1200)
+        extra_body = _optional_dict(record, "extra_body")
         reasoning_effort = normalize_reasoning_effort(
             _optional_str(record, "reasoning_effort")
         )
@@ -55,6 +57,7 @@ class ModelProfile:
                 timeout=timeout,
                 max_output_tokens=max_output_tokens,
                 reasoning_effort=reasoning_effort,
+                extra_body=extra_body,
             )
         raise ValueError(f"unsupported model profile provider: {provider}")
 
@@ -106,6 +109,7 @@ class ModelProfile:
                         base_url=base_url,
                         timeout=self.timeout,
                         max_output_tokens=self.max_output_tokens,
+                        extra_body=self.extra_body,
                     )
                 ),
             )
@@ -203,3 +207,12 @@ def _optional_int(record: dict[str, Any], key: str, default: int) -> int:
     if value <= 0:
         raise ValueError(f"model profile field {key!r} must be positive")
     return value
+
+
+def _optional_dict(record: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = record.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"model profile field {key!r} must be a table")
+    return dict(value)

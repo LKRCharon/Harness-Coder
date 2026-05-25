@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,8 +14,15 @@ from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner, RunResult
 from harnesscoder.core.session import SessionStore
 from harnesscoder.core.state import AgentState, ModelAction
+from harnesscoder.core.models import ModelAdapterError
 from harnesscoder.core.artifacts import store_large_observation
-from harnesscoder.core.tools import ToolRegistry, ToolResult, redact_sensitive_text, safe_subprocess_env
+from harnesscoder.core.tools import (
+    ToolRegistry,
+    ToolResult,
+    normalize_python_command,
+    redact_sensitive_text,
+    safe_subprocess_env,
+)
 from harnesscoder.eval_runner import load_eval_cases, render_markdown_report
 from harnesscoder.replay import reconstruct_state_from_trace, summarize_trace
 
@@ -92,6 +101,61 @@ class ToolRegistryTests(unittest.TestCase):
             )
         self.assertTrue(result.ok, result.output)
         self.assertEqual(result.metadata["returncode"], 0)
+
+    def test_run_tests_uses_current_interpreter_for_python_command(self) -> None:
+        previous_path = os.environ.get("PATH", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_python = fake_bin / "python"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "echo fake python should not run >&2\n"
+                "exit 42\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(
+                fake_python.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertEqual(1 + 1, 2)\n",
+                encoding="utf-8",
+            )
+
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{previous_path}"
+            try:
+                result = ToolRegistry(root).run_tests(
+                    call_id="call_tests",
+                    cmd="python -m unittest discover",
+                    timeout=30,
+                )
+            finally:
+                os.environ["PATH"] = previous_path
+
+        self.assertTrue(result.ok, result.output)
+        self.assertEqual(result.metadata["returncode"], 0)
+        self.assertNotIn("fake python should not run", result.output)
+
+    def test_normalize_python_command_only_rewrites_bare_python(self) -> None:
+        self.assertEqual(
+            normalize_python_command(["python", "-m", "unittest"]),
+            [sys.executable, "-m", "unittest"],
+        )
+        self.assertEqual(
+            normalize_python_command(["python3.11", "-m", "unittest"]),
+            [sys.executable, "-m", "unittest"],
+        )
+        self.assertEqual(
+            normalize_python_command(["/usr/bin/python3", "-m", "unittest"]),
+            ["/usr/bin/python3", "-m", "unittest"],
+        )
 
     def test_repo_map_extracts_python_symbols_and_omits_local_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -493,6 +557,51 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["model_metadata"]["effective_reasoning_effort"], "xhigh")
         self.assertNotIn("api_key", json.dumps(run_started["model_metadata"]))
 
+    def test_runner_retries_retryable_model_adapter_error_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = _RetryableErrorThenFinishModel()
+            runner = AgentRunner(
+                model=model,
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Finish after a retry.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(summary["metrics"]["model_retry_count"], 1)
+        retry = next(record for record in records if record["type"] == "model_retry")
+        self.assertEqual(retry["reason"], "model_step")
+        self.assertEqual(retry["attempt"], 1)
+        self.assertEqual(retry["max_retries"], 1)
+        self.assertIn("did not include text output", retry["error"])
+
+    def test_runner_does_not_retry_non_retryable_model_adapter_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = _UnknownToolErrorModel()
+            runner = AgentRunner(
+                model=model,
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Fail with a protocol error.")
+            summary = summarize_trace(result.trace_path)
+
+        self.assertEqual(result.status, "model_error")
+        self.assertEqual(model.calls, 1)
+        self.assertEqual(summary["metrics"]["model_retry_count"], 0)
+
     def test_runner_injects_repo_map_in_pack_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -807,6 +916,34 @@ class _MetadataFinishModel:
             rationale="Done.",
             content="done",
         )
+
+
+class _RetryableErrorThenFinishModel:
+    name = "retryable-error-then-finish"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        self.calls += 1
+        if self.calls == 1:
+            raise ModelAdapterError("model API response did not include text output")
+        return ModelAction(
+            kind="finish",
+            rationale="Retry produced a valid action.",
+            content="done",
+        )
+
+
+class _UnknownToolErrorModel:
+    name = "unknown-tool-error"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        self.calls += 1
+        raise ModelAdapterError("tool action requested unknown tool: fly_to_moon")
 
 
 class _FinishOnGraceModel:

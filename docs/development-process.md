@@ -1267,6 +1267,27 @@ updates, compression count, and failure breakdown. The CLI accepts either a
 direct provider or one configured model profile as the model under test; it does
 not mix multi-profile comparison with context ablation in one table.
 
+## 1.3.3 Milestone
+
+### 51. Real-Model Eval Hygiene Is Trace-Visible
+
+Problem:
+OpenAI-compatible providers often return useful but imperfect action payloads:
+JSON wrapped in prose, Chat Completions `tool_calls`, tool aliases, string
+arguments, or transient empty/504 responses. Treating all of these as identical
+agent failures pollutes HC-Bench reports and makes ATT trace ingestion noisier.
+
+Decision:
+Normalize common action shapes at the adapter boundary, normalize bare
+`python`/`python3.x` commands to the current interpreter for tools and eval
+verifiers, and retry one clearly retryable adapter failure per model step. Each
+retry emits `model_retry`, and replay/eval reports aggregate
+`model_retry_count`.
+
+The harness still records a failed retry as `model_error`. This is runtime
+hygiene, not benchmark special-casing: HC-Bench case definitions, verifiers, and
+scoring remain unchanged.
+
 Interview angle:
 This is the right way to answer "does RepoMap or memory actually help?" The
 answer is not subjective. HC can run a controlled ablation matrix and compare

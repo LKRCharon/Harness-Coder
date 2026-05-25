@@ -28,16 +28,17 @@ DAG 或工作流框架可以用来组织 agent 外围的 eval pipeline，但 age
 
 ## 当前状态
 
-版本 `1.3.2` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
+版本 `1.3.3` 已经是一个可运行的本地 runtime，支持真实 bugfix 与最小
 greenfield eval loop、HC-Bench-20/40、trace replay、eval report、model profile
 矩阵对比、上下文治理 prompt assembly、任务内 memory、compression metrics、
 轻量 RepoMap、checkpoint/resume，以及用于审计和回放的大工具输出 artifact
 存储。它还补上了跨 run 的 durable session，让 CLI/TUI 能处理“继续刚才那个
 任务”这类跟进消息，同时每次 agent run 仍然有独立 trace。1.3.1/1.3.2 又补上
 Context Budget v2 和 context ablation matrix，让上下文压缩、RepoMap、memory
-这些能力可以从 trace 里解释，也可以在报告里做消融对比。训练 trace 收集和
-live eval 仍然分开：HC-Train-40 用于训练池，HC-Bench-20/40 用于
-heldout/control 评测。
+这些能力可以从 trace 里解释，也可以在报告里做消融对比。1.3.3 补上真实模型
+eval hygiene：更宽容的 action 解析、可复现的 Python 子进程命令，以及可在
+trace/report 中审计的 model retry 指标。训练 trace 收集和 live eval 仍然分开：
+HC-Train-40 用于训练池，HC-Bench-20/40 用于 heldout/control 评测。
 
 当前包含：
 
@@ -289,7 +290,8 @@ CLI 从仓库启动时，会自动加载当前目录和 `--cwd` 目录下的 `.e
 [docs/spec-1.2.1.md](docs/spec-1.2.1.md)；1.3.0 的 durable session 范围见
 [docs/spec-1.3.0.md](docs/spec-1.3.0.md)，1.3.1 的 Context Budget v2 范围见
 [docs/spec-1.3.1.md](docs/spec-1.3.1.md)，1.3.2 的 context ablation matrix 范围见
-[docs/spec-1.3.2.md](docs/spec-1.3.2.md)。1.1 的 prompt caching 背景总结见
+[docs/spec-1.3.2.md](docs/spec-1.3.2.md)，1.3.3 的真实模型 eval hygiene 范围见
+[docs/spec-1.3.3.md](docs/spec-1.3.3.md)。1.1 的 prompt caching 背景总结见
 [docs/blog/claude-code-prompt-caching.md](docs/blog/claude-code-prompt-caching.md)。
 
 ## Replay And Eval
