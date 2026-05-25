@@ -28,64 +28,36 @@ the model's evolving plan. A DAG or LangGraph-style workflow can be useful for
 the eval pipeline around the agent, but the agent itself should remain a
 policy-gated loop.
 
-## Current Status
+## What It Provides
 
-Version `1.3.3` is a runnable local runtime with real bugfix and minimal
-greenfield eval loops, HC-Bench-20/40, trace replay, eval reporting,
-model-profile comparison, context-governed prompt assembly, task-local memory,
-compression metrics, lightweight RepoMap, checkpoint/resume support, and a
-large-output artifact store for audit/replay. It also adds durable cross-run
-sessions for CLI/TUI follow-up tasks while keeping each agent run separately
-traceable. The 1.3.1/1.3.2 slices add Context Budget v2 and a context ablation
-matrix so prompt compaction and RepoMap/memory behavior can be inspected from
-trace and compared in reports. The 1.3.3 slice tightens real-model eval hygiene
-with tolerant action parsing, reproducible Python subprocess commands, and
-trace-visible model retry metrics. Training trace collection remains separate
-from live evaluation through HC-Train-40 and HC-Bench-20/40. It includes:
+HarnessCoder is infrastructure for running and studying coding-agent behavior,
+not a claim that one scaffold is universally strong. It provides:
 
-- A `ScriptedModel` that simulates model actions without calling a real LLM.
-- Tool execution for:
-  - `read_file(path, offset=0, limit=200)`
-  - `search_code(query, path=".")`
-  - `repo_map(query=None, max_tokens=1200, refresh=false)`
-  - `write_file(path, content, overwrite=false)`
-  - `edit_file(path, old, new)`
-  - `run_tests(cmd=None, timeout=60)`
-  - `run_command(cmd, timeout=30)`
-- A minimal policy gate before every tool call.
-- JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`.
-- Large tool observations are previewed in trace/model context and persisted
-  under the run's `artifacts/` directory with size and hash metadata.
-- `context_packed`, `checkpoint_created`, `run_resumed`, and `test_result`
-  events for reliability-oriented replay.
-- Context Budget v2 fields on `context_packed`, including per-section chars,
-  budgets, preserved/reduced flags, dropped blocks, and total budget usage.
-- Durable session JSON under `.harnesscoder/sessions/<session_id>.json` and
-  `session_context_loaded` trace events for cross-run follow-up tasks.
-- `repo_map_built` and `repo_map_used` events for repository-level context
-  governance.
-- Trace replay summaries through `python -m harnesscoder.replay`.
-- A minimal eval harness that runs cases, executes tests, scores results, and
-  renders a Markdown report.
-- Fixture-backed bugfix evals that copy a repo into
-  `.harnesscoder/eval-workspaces/...` before editing it.
-- A greenfield eval that starts from a nearly empty fixture and creates source
-  plus tests from scratch.
-- Case-level `allowed_tools`, `step_budget`, and `verifier` fields inspired by
-  benchmark harnesses such as Pico.
-- Model profiles and Markdown eval matrices for comparing the same cases across
-  providers.
-- HC-Bench-20: the original 20-case fixture-backed scorecard across bugfix,
-  recovery, greenfield, context-governance, and policy/safety categories.
-- HC-Bench-40: a harder heldout scorecard that keeps HC-Bench-20 comparable and
-  adds ProgramBench-style programming repairs, parser recovery, richer
-  greenfield tasks, large-context lookup tasks, and policy/security cases.
-- HC-Train-40: 40 fixture-backed training cases for teacher/current-policy trace
-  collection, with explicit `split=train` and `source=synthetic-microbenchmark`
-  metadata.
-- A deterministic `hc-bench-oracle` provider that proves the benchmark and
-  report pipeline are solvable before comparing real models.
-- CLI entrypoints:
+- A dynamic model-decision loop with policy-gated local tools:
+  `read_file`, `search_code`, `repo_map`, `write_file`, `edit_file`,
+  `run_tests`, and `run_command`.
+- JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`, with
+  `run_started`, `context_packed`, `model_action`, `policy_decision`,
+  `tool_result`, `test_result`, `checkpoint_created`, `model_retry`, and
+  `run_finished` events.
+- Isolated eval workspaces under `.harnesscoder/eval-workspaces/...`, so cases
+  can be replayed without mutating the source fixtures.
+- Markdown eval reports with pass/fail, verifier pass, tool-use metrics, policy
+  denials, model errors, context metrics, artifact integrity, and failure
+  categories.
+- Context governance through prompt packing, task-local memory, observation
+  compression, durable session context, and lightweight RepoMap injection.
+- Context ablations over memory, RepoMap, compaction, and policy recovery using
+  the same cases and the same model.
+- OpenAI-compatible real-model profiles for Responses API and Chat Completions
+  endpoints, including tolerant action parsing, `tool_calls` support, and
+  trace-visible retry/backoff for transient provider failures.
+- HC-Train-40 for training-trace collection, HC-Bench-20 for controlled
+  runtime comparison, and HC-Bench-40 as a harder heldout scorecard.
+- A deterministic `hc-bench-oracle` provider that validates fixture solvability,
+  verifier contracts, and report generation before real models are compared.
+
+Common entrypoints:
 
 ```bash
 python -m harnesscoder "看一下这个 repo 是做什么的"
@@ -100,6 +72,141 @@ python -m harnesscoder --provider hc-bench-oracle --eval eval/hc_bench_20.json -
 
 The scripted model currently performs a small repo-orientation pass: search for
 project mentions, read `README.md`, list files, and then produce a final answer.
+
+## Design Principles
+
+1. Dynamic agent loop, fixed eval wrapper.
+   Coding tasks require adaptive model decisions, while evaluation should remain
+   reproducible.
+2. Tool calls are proposed by the model, not trusted by the runtime.
+   Every tool call passes through a policy gate before execution.
+3. Trace first.
+   If a run cannot be inspected, replayed, or scored, it is not useful for agent
+   research.
+4. Context is a controlled resource.
+   Prompt packing, memory, RepoMap, and session context should be measurable and
+   ablatable.
+5. Benchmarks are diagnostic tools, not marketing claims.
+   Local suites are used to compare scaffolds, policies, and context strategies
+   under controlled conditions.
+
+## Evidence Snapshot
+
+The numbers below are local controlled runs from this workspace. HC-Bench-20/40
+are synthetic microbenchmarks for runtime, policy, context, and verifier
+diagnostics. They should not be presented as real-world issue-resolution
+performance. Oracle results validate harness solvability and report integrity;
+real-model rows are the model comparison evidence.
+
+The highest-value readout order is:
+
+1. real model matrix
+2. context ablation
+3. policy recovery
+4. trace/replay integrity
+5. failure taxonomy
+
+### Real Model Matrix
+
+This is the most valuable table: different real models, the same benchmark, and
+the same context mode. These rows use HC-Bench-20 with
+`--context-mode pack --repo-map-mode auto`.
+
+| Model | Pass rate | Verifier pass | Avg tool calls | Invalid JSON/action | Policy denials | Tool failures | Max-iteration failures | Avg runtime | Failure breakdown |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| gpt-5.4 | 45.0% (9/20) | 50.0% (10/20) | 3.80 | 0 | 2 | 22 | 2 | not summarized | success=9, tool_failed=1, verifier_failed=10 |
+| gpt-5.5 | 25.0% (5/20) | 55.0% (11/20) | 4.90 | 0 | 1 | 21 | 11 | not summarized | model_error=1, success=5, tool_failed=6, verifier_failed=8 |
+| deepseek | 15.0% (3/20) | 55.0% (11/20) | 5.00 | 0 | 13 | 30 | 13 | not summarized | model_error=3, policy_denied=3, success=3, test_failed=1, tool_failed=4, verifier_failed=6 |
+
+The useful signal is not just pass/fail. These reports show that a model can
+make tests pass while still missing trace-level workflow requirements such as
+search-first evidence, failed-test -> repair -> retest recovery, or safe
+continuation after a denied action.
+
+A newer single-profile report shape adds patch success, artifact integrity,
+budget chars, stable-prefix changes, output compression, and model retry counts.
+That report format should be used for future real-model matrices. `Avg runtime`
+is present in replay timing but is not yet summarized in the matrix table.
+
+### Context Ablation
+
+Context governance is useful only if it can be measured and ablated. This
+oracle matrix keeps the same cases fixed and switches off one runtime behavior
+at a time.
+
+| Ablation | Pass rate | First target read step | Repeated reads | Estimated context tokens | Dropped blocks | Failure category |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| full | 100.0% (20/20) | 2 | 0 | 240194 est. tokens | 0 | success=20 |
+| no_repomap | 100.0% (20/20) | n/a | 0 | 144308 est. tokens | 0 | success=20 |
+| no_memory | 100.0% (20/20) | 2 | 0 | 230034 est. tokens | 0 | success=20 |
+| no_context_compaction | 100.0% (20/20) | n/a | 0 | 98434 est. tokens | 0 | success=20 |
+| no_policy_retry | 85.0% (17/20) | 2 | 0 | 216479 est. tokens | 0 | success=17, verifier_failed=3 |
+
+This does not prove a model is smarter with RepoMap or memory. It proves the
+runtime can switch those context features on and off on the same tasks, and can
+report the behavior changes instead of relying on feature names.
+
+### Policy Recovery
+
+Policy cases are designed to check whether a model can recover after an unsafe
+or disallowed action.
+
+| Condition | Denial count | Recovery success rate | Repeat denial count | Policy-caused max iteration | Readout |
+| --- | ---: | ---: | ---: | ---: | --- |
+| full oracle runtime | 1 | 3/3 | 0 | 0 | Denial is trace-visible and the agent gets a recovery turn. |
+| no_policy_retry ablation | 1 | 0/3 | 0 | 3 | Removing the recovery turn makes all policy cases fail. |
+| gpt-5.5 real-model matrix row | 1 | 1/3 | not summarized | 2 | Real models often make safe progress but miss the exact recovery workflow. |
+
+### Trace And Replay Integrity
+
+Every case should leave replayable evidence: trace, workspace, verifier result,
+artifact metadata, and checkpoints. A report is useful only when those evidence
+paths explain what happened.
+
+| Evidence | Count |
+| --- | ---: |
+| Case traces | 20 |
+| `context_packed` events | 99 in the full oracle ablation |
+| `checkpoint_created` events | 99 in the full oracle ablation |
+| Replay success | trace summary generated for each case |
+| Stored artifacts | 6 in one recent real-model HC-Bench-20 run |
+| Artifact missing / hash mismatch | 0 / 0 |
+| Context budget reductions / dropped blocks | 0 / 0 |
+| Resume success | n/a in these reports; supported by checkpoint/resume smoke tests |
+
+### Failure Taxonomy
+
+Failure categories are interview-friendly because they show diagnostics beyond
+pass/fail. The current gpt-5.5 HC-Bench-20 matrix row breaks down strict
+outcomes this way:
+
+| Failure Category | Count | Example | Likely Cause |
+| --- | ---: | --- | --- |
+| success | 5 | `business-feature-flag-default` | Patch, tests, and verifier all passed. |
+| verifier_failed | 8 | `business-discount-boundary` | Tests passed or progress was made, but the trace missed required workflow evidence. |
+| tool_failed | 6 | `business-overdue-timezone` | Agent hit the iteration budget or a tool failure after partial progress. |
+| model_error | 1 | `greenfield-rate-limiter` | Provider/model call failed before the run produced a valid final state. |
+
+This table is the point of the harness: failures are not only "wrong answer" but
+runtime-diagnosable behaviors that can feed prompt changes, policy changes, or
+post-training data generation. The next badcase layer should split broad
+categories into causes such as `target_not_found`, `invalid_action`,
+`patch_failed`, `policy_recovery_failed`, `max_iterations`, and `test_timeout`.
+
+### Claim Hygiene
+
+Do not describe oracle pass rate as model performance. Say: the deterministic
+oracle reaches 100% on HC-Bench-20/40, validating that the benchmark fixtures,
+verifiers, and reporting pipeline are solvable.
+
+Do not describe HC-Bench-20/40 as real-world coding-agent performance. Say:
+HC-Bench-20/40 are controlled microbenchmarks for runtime and scaffold
+evaluation. Real-world issue-resolution evaluation is future work.
+
+Do not claim "context governance improves reliability" without numbers. Say:
+context governance enables ablation over prompt packing, memory, and RepoMap
+injection. Current reports compare pass rate, repeated reads, first target read
+step, dropped blocks, and failure categories.
 
 ## TUI
 
