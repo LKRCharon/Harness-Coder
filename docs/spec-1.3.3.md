@@ -25,7 +25,8 @@ trace/replay reports.
   `extra_body` table for endpoint-specific options.
 - Normalize bare `python` / `python3.x` subprocess commands to the current
   interpreter in tool execution and eval verifier commands.
-- Retry one clearly retryable model adapter failure per model step:
+- Retry clearly retryable model adapter failures with capped exponential
+  backoff:
   - empty or missing model text
   - invalid action JSON
   - transient request failures
@@ -50,7 +51,10 @@ A retryable adapter failure emits:
   "type": "model_retry",
   "reason": "model_step",
   "attempt": 1,
-  "max_retries": 1,
+  "max_retries": 2,
+  "delay_seconds": 1.0,
+  "retry_after_seconds": null,
+  "backoff_strategy": "exponential",
   "error_type": "ModelAdapterError",
   "error": "...",
   "state": {}
@@ -58,6 +62,19 @@ A retryable adapter failure emits:
 ```
 
 `reason` is either `model_step` or `finish_grace`.
+
+Default retry settings:
+
+```text
+max_retries = 2
+base_delay_seconds = 1.0
+max_delay_seconds = 30.0
+```
+
+For provider errors that include `retry_after` / `retry-after`, the runner uses
+that value when it is larger than the exponential delay, capped by
+`max_delay_seconds`. This avoids immediate retry storms while preventing a
+single eval case from sleeping for minutes due to an overloaded endpoint.
 
 Replay summaries expose:
 

@@ -561,11 +561,13 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             model = _RetryableErrorThenFinishModel()
+            sleeps: list[float] = []
             runner = AgentRunner(
                 model=model,
                 cwd=root,
                 trace_root=root / ".harnesscoder" / "runs",
                 max_iterations=1,
+                model_retry_sleep=sleeps.append,
             )
 
             result = runner.run("Finish after a retry.")
@@ -578,11 +580,75 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(model.calls, 2)
         self.assertEqual(summary["metrics"]["model_retry_count"], 1)
+        self.assertEqual(sleeps, [1.0])
         retry = next(record for record in records if record["type"] == "model_retry")
         self.assertEqual(retry["reason"], "model_step")
         self.assertEqual(retry["attempt"], 1)
-        self.assertEqual(retry["max_retries"], 1)
+        self.assertEqual(retry["max_retries"], 2)
+        self.assertEqual(retry["delay_seconds"], 1.0)
+        self.assertEqual(retry["backoff_strategy"], "exponential")
         self.assertIn("did not include text output", retry["error"])
+
+    def test_runner_uses_exponential_backoff_for_multiple_model_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = _RetryableErrorsThenFinishModel(failures=2)
+            sleeps: list[float] = []
+            runner = AgentRunner(
+                model=model,
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+                model_retry_sleep=sleeps.append,
+            )
+
+            result = runner.run("Finish after two retries.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(model.calls, 3)
+        self.assertEqual(summary["metrics"]["model_retry_count"], 2)
+        self.assertEqual(sleeps, [1.0, 2.0])
+        retries = [record for record in records if record["type"] == "model_retry"]
+        self.assertEqual([retry["attempt"] for retry in retries], [1, 2])
+        self.assertEqual([retry["delay_seconds"] for retry in retries], [1.0, 2.0])
+
+    def test_runner_caps_provider_retry_after_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = _RetryableErrorsThenFinishModel(
+                failures=1,
+                error=(
+                    'model API returned HTTP 504: {"retryable":true, '
+                    '"retry_after":120}'
+                ),
+            )
+            sleeps: list[float] = []
+            runner = AgentRunner(
+                model=model,
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+                model_retry_max_delay_seconds=30,
+                model_retry_sleep=sleeps.append,
+            )
+
+            result = runner.run("Finish after retry-after.")
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(sleeps, [30.0])
+        retry = next(record for record in records if record["type"] == "model_retry")
+        self.assertEqual(retry["retry_after_seconds"], 120.0)
+        self.assertEqual(retry["delay_seconds"], 30.0)
+        self.assertEqual(retry["backoff_strategy"], "retry_after_capped")
 
     def test_runner_does_not_retry_non_retryable_model_adapter_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -928,6 +994,30 @@ class _RetryableErrorThenFinishModel:
         self.calls += 1
         if self.calls == 1:
             raise ModelAdapterError("model API response did not include text output")
+        return ModelAction(
+            kind="finish",
+            rationale="Retry produced a valid action.",
+            content="done",
+        )
+
+
+class _RetryableErrorsThenFinishModel:
+    name = "retryable-errors-then-finish"
+
+    def __init__(
+        self,
+        *,
+        failures: int,
+        error: str = "model API response did not include text output",
+    ) -> None:
+        self.calls = 0
+        self.failures = failures
+        self.error = error
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ModelAdapterError(self.error)
         return ModelAction(
             kind="finish",
             rationale="Retry produced a valid action.",

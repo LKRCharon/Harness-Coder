@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from harnesscoder.core.artifacts import store_large_observation
@@ -29,6 +31,9 @@ from harnesscoder.core.trace import TraceWriter
 
 
 RepoMapMode = Literal["none", "auto"]
+MODEL_RETRY_MAX_RETRIES = 2
+MODEL_RETRY_BASE_DELAY_SECONDS = 1.0
+MODEL_RETRY_MAX_DELAY_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -51,6 +56,10 @@ class AgentRunner:
         tools: ToolRegistry | None = None,
         repo_map_max_tokens: int = 1200,
         repo_map_mode: RepoMapMode = "auto",
+        model_retry_max_retries: int = MODEL_RETRY_MAX_RETRIES,
+        model_retry_base_delay_seconds: float = MODEL_RETRY_BASE_DELAY_SECONDS,
+        model_retry_max_delay_seconds: float = MODEL_RETRY_MAX_DELAY_SECONDS,
+        model_retry_sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.model = model
         self.cwd = cwd.resolve()
@@ -62,6 +71,16 @@ class AgentRunner:
         self.repo_map = RepoMapCache(self.cwd)
         self.repo_map_max_tokens = repo_map_max_tokens
         self.repo_map_mode = repo_map_mode
+        self.model_retry_max_retries = max(0, int(model_retry_max_retries))
+        self.model_retry_base_delay_seconds = max(
+            0.0,
+            float(model_retry_base_delay_seconds),
+        )
+        self.model_retry_max_delay_seconds = max(
+            0.0,
+            float(model_retry_max_delay_seconds),
+        )
+        self._model_retry_sleep = model_retry_sleep or time.sleep
         self._stable_prefix_hash: str | None = None
 
     def run(
@@ -423,21 +442,42 @@ class AgentRunner:
         *,
         reason: str,
     ) -> ModelAction:
-        try:
-            return self._next_model_action(state, context)
-        except ModelAdapterError as exc:
-            if not _is_retryable_model_adapter_error(exc):
-                raise
-            trace.emit(
-                "model_retry",
-                reason=reason,
-                attempt=1,
-                max_retries=1,
-                error_type=type(exc).__name__,
-                error=str(exc),
-                state=state.snapshot(),
-            )
-            return self._next_model_action(state, context)
+        retries_used = 0
+        while True:
+            try:
+                return self._next_model_action(state, context)
+            except ModelAdapterError as exc:
+                if (
+                    not _is_retryable_model_adapter_error(exc)
+                    or retries_used >= self.model_retry_max_retries
+                ):
+                    raise
+                retries_used += 1
+                retry_after_seconds = _retry_after_seconds(exc)
+                delay_seconds = _model_retry_delay_seconds(
+                    attempt=retries_used,
+                    base_delay_seconds=self.model_retry_base_delay_seconds,
+                    max_delay_seconds=self.model_retry_max_delay_seconds,
+                    retry_after_seconds=retry_after_seconds,
+                )
+                trace.emit(
+                    "model_retry",
+                    reason=reason,
+                    attempt=retries_used,
+                    max_retries=self.model_retry_max_retries,
+                    delay_seconds=delay_seconds,
+                    retry_after_seconds=retry_after_seconds,
+                    backoff_strategy=(
+                        "retry_after_capped"
+                        if retry_after_seconds is not None
+                        else "exponential"
+                    ),
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    state=state.snapshot(),
+                )
+                if delay_seconds > 0:
+                    self._model_retry_sleep(delay_seconds)
 
     def _attach_tool_metadata(
         self,
@@ -581,3 +621,38 @@ def _is_retryable_model_adapter_error(exc: ModelAdapterError) -> bool:
         "model API returned non-JSON response:",
     )
     return any(marker in message for marker in retryable_markers)
+
+
+def _retry_after_seconds(exc: ModelAdapterError) -> float | None:
+    message = str(exc)
+    patterns = (
+        r'"retry_after"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        r"\bretry_after\b\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)",
+        r"\bretry-after\b\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        try:
+            return max(0.0, float(match.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
+def _model_retry_delay_seconds(
+    *,
+    attempt: int,
+    base_delay_seconds: float,
+    max_delay_seconds: float,
+    retry_after_seconds: float | None,
+) -> float:
+    if max_delay_seconds <= 0:
+        return 0.0
+    exponential_delay = max(0.0, base_delay_seconds) * (2 ** max(0, attempt - 1))
+    if retry_after_seconds is not None:
+        delay = max(exponential_delay, retry_after_seconds)
+    else:
+        delay = exponential_delay
+    return min(max_delay_seconds, delay)
