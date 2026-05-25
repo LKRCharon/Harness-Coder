@@ -584,7 +584,7 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         retry = next(record for record in records if record["type"] == "model_retry")
         self.assertEqual(retry["reason"], "model_step")
         self.assertEqual(retry["attempt"], 1)
-        self.assertEqual(retry["max_retries"], 2)
+        self.assertEqual(retry["max_retries"], 4)
         self.assertEqual(retry["delay_seconds"], 1.0)
         self.assertEqual(retry["backoff_strategy"], "exponential")
         self.assertIn("did not include text output", retry["error"])

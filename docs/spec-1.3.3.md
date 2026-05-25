@@ -51,7 +51,7 @@ A retryable adapter failure emits:
   "type": "model_retry",
   "reason": "model_step",
   "attempt": 1,
-  "max_retries": 2,
+  "max_retries": 4,
   "delay_seconds": 1.0,
   "retry_after_seconds": null,
   "backoff_strategy": "exponential",
@@ -66,7 +66,7 @@ A retryable adapter failure emits:
 Default retry settings:
 
 ```text
-max_retries = 2
+max_retries = 4
 base_delay_seconds = 1.0
 max_delay_seconds = 30.0
 ```

@@ -31,7 +31,7 @@ from harnesscoder.core.trace import TraceWriter
 
 
 RepoMapMode = Literal["none", "auto"]
-MODEL_RETRY_MAX_RETRIES = 2
+MODEL_RETRY_MAX_RETRIES = 4
 MODEL_RETRY_BASE_DELAY_SECONDS = 1.0
 MODEL_RETRY_MAX_DELAY_SECONDS = 30.0
 
