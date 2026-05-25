@@ -292,6 +292,57 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("important output", payload)
         self.assertEqual(payload.count("important output"), 1)
 
+    def test_pack_context_includes_open_questions_from_memory_block(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Fix the failing tests.",
+            cwd=".",
+            max_iterations=4,
+        )
+        state.memory_blocks["task/open_questions"].value = (
+            "fix failing tests from python -m unittest discover"
+        )
+        state.memory_blocks["task/open_questions"].updated_step = 2
+
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["run_tests"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+        )
+        payload = context.to_model_input()[1]["content"]
+
+        self.assertIn("open_questions", payload)
+        self.assertIn("fix failing tests from python -m unittest discover", payload)
+
+    def test_agent_state_hydrates_open_questions_block_from_legacy_record(self) -> None:
+        state = AgentState.from_record(
+            {
+                "run_id": "run_test",
+                "task": "Fix the failing tests.",
+                "cwd": ".",
+                "max_iterations": 4,
+                "open_questions": [
+                    " fix failing tests from python -m unittest discover ",
+                    "fix failing tests from python -m unittest discover",
+                ],
+            }
+        )
+
+        self.assertEqual(
+            state.current_open_questions(),
+            ["fix failing tests from python -m unittest discover"],
+        )
+        self.assertEqual(
+            state.memory_blocks["task/open_questions"].value,
+            "fix failing tests from python -m unittest discover",
+        )
+        self.assertEqual(
+            state.snapshot()["open_questions"],
+            ["fix failing tests from python -m unittest discover"],
+        )
+
     def test_context_assembly_records_prompt_cache_fingerprints(self) -> None:
         state = AgentState(
             run_id="run_test",

@@ -89,7 +89,23 @@ class AgentState:
     session_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        self.current_open_questions()
         self.refresh_budget()
+
+    def current_open_questions(self) -> list[str]:
+        block = self.memory_blocks.get("task/open_questions")
+        block_questions = _normalize_open_questions(
+            block.value.splitlines() if block is not None else []
+        )
+        if block_questions:
+            self.open_questions = list(block_questions)
+            return list(block_questions)
+
+        legacy_questions = _normalize_open_questions(self.open_questions)
+        if block is not None and legacy_questions and not block.value.strip():
+            block.value = "\n".join(legacy_questions)
+        self.open_questions = list(legacy_questions)
+        return list(legacy_questions)
 
     def append_action(self, action: ModelAction) -> None:
         self.actions.append(action.to_record())
@@ -139,6 +155,7 @@ class AgentState:
 
     def snapshot(self) -> dict[str, Any]:
         self.refresh_budget()
+        open_questions = self.current_open_questions()
         return {
             "run_id": self.run_id,
             "task": self.task,
@@ -150,7 +167,7 @@ class AgentState:
             "phase": self.phase,
             "file_summaries": dict(self.file_summaries),
             "last_error": self.last_error,
-            "open_questions": list(self.open_questions),
+            "open_questions": open_questions,
             "budget": dict(self.budget),
             "memory_blocks": memory_blocks_to_records(self.memory_blocks),
             "session_context": (
@@ -168,6 +185,7 @@ class AgentState:
 
     def to_record(self) -> dict[str, Any]:
         self.refresh_budget()
+        open_questions = self.current_open_questions()
         return {
             "run_id": self.run_id,
             "task": self.task,
@@ -185,7 +203,7 @@ class AgentState:
             "phase": self.phase,
             "file_summaries": dict(self.file_summaries),
             "last_error": self.last_error,
-            "open_questions": list(self.open_questions),
+            "open_questions": open_questions,
             "budget": dict(self.budget),
             "memory_blocks": memory_blocks_to_records(self.memory_blocks),
             "session_context": (
@@ -289,11 +307,12 @@ class AgentState:
 
     def governance_snapshot(self, include_budget: bool = True) -> dict[str, Any]:
         self.refresh_budget()
+        open_questions = self.current_open_questions()
         snapshot = {
             "phase": self.phase,
             "file_summaries": dict(self.file_summaries),
             "last_error": self.last_error,
-            "open_questions": list(self.open_questions),
+            "open_questions": open_questions,
             "modified_files": list(self.modified_files),
             "memory_blocks": memory_blocks_to_records(self.memory_blocks),
             "done": self.done,
@@ -376,3 +395,15 @@ def _strip_number_prefix(line: str) -> str:
         return line
     prefix, content = line.split("|", 1)
     return content if prefix.strip().isdigit() else line
+
+
+def _normalize_open_questions(questions: list[str] | tuple[str, ...]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for question in questions:
+        item = " ".join(str(question).split())
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized

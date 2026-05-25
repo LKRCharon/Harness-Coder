@@ -11,6 +11,7 @@ def build_context_pack(state: AgentState, hot_limit: int = 6) -> dict[str, Any]:
 
     hot_limit = max(1, hot_limit)
     state.refresh_budget()
+    open_questions = state.current_open_questions()
     recent_observations = state.observations[-hot_limit:]
     cold_observations = state.observations[:-hot_limit]
 
@@ -27,7 +28,7 @@ def build_context_pack(state: AgentState, hot_limit: int = 6) -> dict[str, Any]:
             "file_summaries": dict(state.file_summaries),
             "modified_files": list(state.modified_files),
             "last_error": state.last_error,
-            "open_questions": list(state.open_questions),
+            "open_questions": open_questions,
         },
         "cold_trace_summary": _cold_trace_summary(state, cold_observations),
         "budget": dict(state.budget),
