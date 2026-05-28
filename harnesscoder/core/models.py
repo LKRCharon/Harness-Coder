@@ -594,7 +594,11 @@ def _parse_action_json(text: str) -> dict[str, Any]:
             return candidate
     if candidates:
         return candidates[0]
-    raise ModelAdapterError(f"model did not return valid action JSON: {text}")
+    raise ModelAdapterError(
+        f"model did not return valid action JSON: {text}",
+        category="action_parse_error",
+        response_excerpt=_clip(text, 2000),
+    )
 
 
 def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:

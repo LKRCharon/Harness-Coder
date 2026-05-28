@@ -271,6 +271,10 @@ def _metrics_summary(
         "test_result_count": _event_count(records, "test_result"),
         "verifier_result_count": _event_count(records, "verifier_result"),
         "resume_success_rate": _resume_success_rate(records, status),
+        "model_error_count": _event_count(records, "model_error"),
+        "transient_provider_error_count": _transient_provider_error_count(records),
+        "model_error_breakdown": _model_error_breakdown(records),
+        "model_error_status_breakdown": _model_error_status_breakdown(records),
         "test_passed": _test_passed(test_result),
         "verifier_passed": _test_passed(verifier_result),
     }
@@ -852,7 +856,7 @@ def _failure_category(
     if not records or status in {"empty", "incomplete"}:
         return "incomplete"
     if status == "model_error" or _last_event(records, "model_error") is not None:
-        return "model_error"
+        return _model_error_failure_category(records)
     if metrics.get("verifier_passed") is False:
         return "verifier_failed"
     if (
@@ -872,6 +876,62 @@ def _failure_category(
     if state.get("done") is True:
         return "success"
     return "incomplete"
+
+
+def _model_error_failure_category(records: list[JsonRecord]) -> str:
+    record = _last_event(records, "model_error")
+    if record is None:
+        return "model_error"
+    category = record.get("category")
+    if isinstance(category, str) and category:
+        return f"model_error:{category}"
+    return "model_error"
+
+
+def _transient_provider_error_count(records: list[JsonRecord]) -> int:
+    return sum(
+        1
+        for record in records
+        if record.get("type") == "model_error"
+        and _model_error_is_transient_provider(record)
+    )
+
+
+def _model_error_is_transient_provider(record: JsonRecord) -> bool:
+    category = record.get("category")
+    if category in {
+        "provider_5xx",
+        "rate_limited",
+        "timeout",
+        "connection_error",
+        "invalid_json_response",
+    }:
+        return True
+    if record.get("retryable") is True:
+        return True
+    status_code = record.get("status_code")
+    return isinstance(status_code, int) and (status_code == 429 or status_code >= 500)
+
+
+def _model_error_breakdown(records: list[JsonRecord]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for record in records:
+        if record.get("type") != "model_error":
+            continue
+        category = record.get("category")
+        counts[category if isinstance(category, str) and category else "unknown"] += 1
+    return dict(sorted(counts.items()))
+
+
+def _model_error_status_breakdown(records: list[JsonRecord]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for record in records:
+        if record.get("type") != "model_error":
+            continue
+        status_code = record.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            counts[str(status_code)] += 1
+    return dict(sorted(counts.items()))
 
 
 def _test_passed(test_result: JsonRecord | None) -> bool | None:

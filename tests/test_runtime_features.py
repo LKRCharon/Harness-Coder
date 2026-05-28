@@ -1172,6 +1172,22 @@ class _MetadataFinishModel:
             rationale="Done.",
             content="done",
         )
+
+
+class _ProviderFailureModel:
+    name = "provider-failure"
+
+    def next_action(self, _state: AgentState, _context=None) -> ModelAction:
+        raise ModelAdapterError(
+            "model API returned HTTP 503: unavailable",
+            category="provider_5xx",
+            status_code=503,
+            retryable=True,
+            response_excerpt='{"error":{"type":"api_error"}}',
+            provider_error_type="api_error",
+        )
+
+
 class _RetryableErrorThenFinishModel:
     name = "retryable-error-then-finish"
 

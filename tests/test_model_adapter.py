@@ -7,8 +7,10 @@ from harnesscoder.core.context import build_context_pack
 from harnesscoder.core.models import (
     MODEL_SYSTEM_PROMPT,
     MODEL_TOOL_NAMES,
+    ModelAdapterError,
     OpenAIChatModel,
     OpenAICodexModel,
+    _http_error_category,
     _extract_response_text,
     _model_action_from_payload,
     _parse_action_json,

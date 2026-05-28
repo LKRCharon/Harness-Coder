@@ -240,10 +240,14 @@ class AgentRunner:
                 status = "model_error"
                 answer = f"Model adapter failed: {type(exc).__name__}: {exc}"
                 state.last_error = answer
+                error_fields: dict[str, Any] = {}
+                if isinstance(exc, ModelAdapterError):
+                    error_fields.update(exc.to_trace_record())
                 trace.emit(
                     "model_error",
                     error_type=type(exc).__name__,
                     error=str(exc),
+                    **error_fields,
                     state=state.snapshot(),
                 )
                 state.finish(answer, failed=True)
