@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import shlex
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from harnesscoder.core.notes import NoteStore
 from harnesscoder.core.repo_map import RepoMapCache
 
 
@@ -73,6 +75,7 @@ class ToolRegistry:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
         self._repo_map = RepoMapCache(self.cwd)
+        self._notes = NoteStore.for_workspace(self.cwd)
         self._tools: dict[str, ToolFn] = {
             "read_file": self.read_file,
             "search_code": self.search_code,
@@ -81,6 +84,8 @@ class ToolRegistry:
             "edit_file": self.edit_file,
             "run_tests": self.run_tests,
             "run_command": self.run_command,
+            "create_note": self.create_note,
+            "search_notes": self.search_notes,
         }
 
     def execute(self, call_id: str, tool_name: str, tool_args: dict[str, Any]) -> ToolResult:
@@ -497,6 +502,72 @@ class ToolRegistry:
                 "created": created,
                 "overwrite": overwrite,
                 "content_length": len(content),
+            },
+        )
+
+    def create_note(
+        self,
+        call_id: str,
+        title: str,
+        content: str,
+        note_type: str = "general",
+        tags: list[str] | None = None,
+    ) -> ToolResult:
+        tool_name = "create_note"
+        try:
+            note = self._notes.create(
+                note_type=note_type,
+                title=title,
+                content=content,
+                tags=tags or [],
+                source_call_id=call_id,
+            )
+        except ValueError as exc:
+            return ToolResult(call_id, tool_name, False, "", str(exc))
+
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            ok=True,
+            output=f"Created {note.type} note {note.note_id}: {note.title}",
+            metadata={
+                "note_id": note.note_id,
+                "note_type": note.type,
+                "title": note.title,
+                "tags": list(note.tags),
+                "notes_path": str(self._notes.path.relative_to(self.cwd)),
+            },
+        )
+
+    def search_notes(
+        self,
+        call_id: str,
+        query: str,
+        limit: int = 5,
+        note_type: str | None = None,
+    ) -> ToolResult:
+        tool_name = "search_notes"
+        try:
+            notes = self._notes.search(
+                query=query,
+                limit=limit,
+                note_type=note_type,
+            )
+        except ValueError as exc:
+            return ToolResult(call_id, tool_name, False, "", str(exc))
+
+        records = [note.to_record() for note in notes]
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            ok=True,
+            output=json.dumps(records, ensure_ascii=False, indent=2, sort_keys=True),
+            metadata={
+                "query": query,
+                "limit": limit,
+                "note_type": note_type,
+                "note_count": len(records),
+                "note_ids": [record["note_id"] for record in records],
             },
         )
 

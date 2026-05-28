@@ -26,7 +26,7 @@ from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.control import ACTIVE_RUN_READ_ONLY_COMMANDS, RunControlPlane
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.prompt import ContextMode
-from harnesscoder.core.runner import AgentRunner, RepoMapMode, RunResult
+from harnesscoder.core.runner import AgentRunner, NotesMode, RepoMapMode, RunResult
 from harnesscoder.core.session import (
     DEFAULT_SESSION_ID,
     DEFAULT_SESSION_ROOT,
@@ -52,6 +52,7 @@ class TuiConfig:
     reasoning_effort: str | None = None
     context_mode: ContextMode = "none"
     repo_map_mode: RepoMapMode = "auto"
+    notes_mode: NotesMode = "auto"
     session_id: str = DEFAULT_SESSION_ID
     session_root: Path = DEFAULT_SESSION_ROOT
 
@@ -294,6 +295,7 @@ class HarnessCoderTui:
                     [
                         ("context", self.config.context_mode),
                         ("repo-map", self.config.repo_map_mode),
+                        ("notes", self.config.notes_mode),
                         ("iters", str(self.config.max_iterations)),
                         ("reasoning", self.config.reasoning_effort or "-"),
                     ],
@@ -465,6 +467,7 @@ class HarnessCoderTui:
                 max_iterations=active.config.max_iterations,
                 context_mode=active.config.context_mode,
                 repo_map_mode=active.config.repo_map_mode,
+                notes_mode=active.config.notes_mode,
             )
             store = self._session_store(active.config)
             session_context = store.build_context(active.config.session_id)
@@ -522,6 +525,7 @@ class HarnessCoderTui:
             f"status: {result.status}\n"
             f"trace: {result.trace_path}"
         )
+        reply = self._append_runtime_summary(reply, result.trace_path)
         self.messages.append(Message("assistant", reply))
         self._active_run = None
 
@@ -537,6 +541,7 @@ class HarnessCoderTui:
             max_iterations=self.config.max_iterations,
             context_mode=self.config.context_mode,
             repo_map_mode=self.config.repo_map_mode,
+            notes_mode=self.config.notes_mode,
             session_id=self.config.session_id,
             session_root=self.config.session_root,
         )
@@ -612,6 +617,7 @@ class HarnessCoderTui:
             "model": self._cmd_model,
             "base-url": self._cmd_base_url,
             "reasoning": self._cmd_reasoning,
+            "notes-mode": self._cmd_notes_mode,
             "cwd": self._cmd_cwd,
             "max-iterations": self._cmd_max_iterations,
             "tools": self._cmd_tools,
@@ -653,6 +659,7 @@ class HarnessCoderTui:
                         "/model [name|scripted] - show or change model",
                         "/base-url [url] - show or change OpenAI-compatible base URL",
                         "/reasoning [none|minimal|low|medium|high|xhigh|reset] - show or change Codex reasoning effort",
+                        "/notes-mode [none|auto] - show or change durable note retrieval mode",
                         "/cwd [path] - show or change repository cwd",
                         "/max-iterations [n] - show or change loop limit",
                         "/session [id] - show or switch durable session",
@@ -685,9 +692,11 @@ class HarnessCoderTui:
                         f"max_iterations: {self.config.max_iterations}",
                         f"context_mode: {self.config.context_mode}",
                         f"repo_map_mode: {self.config.repo_map_mode}",
+                        f"notes_mode: {self.config.notes_mode}",
                         f"session_id: {self.config.session_id}",
                         f"session_root: {self._session_root_path()}",
                         f"trace_root: {self.config.trace_root}",
+                        *self._runtime_status_lines(),
                     ]
                 ),
             )
@@ -762,6 +771,19 @@ class HarnessCoderTui:
             return
         self.config.reasoning_effort = effort
         self.messages.append(Message("system", f"reasoning_effort set to {effort}"))
+
+    def _cmd_notes_mode(self, args: list[str], _line: str) -> None:
+        if not args:
+            self.messages.append(
+                Message("system", f"notes_mode: {self.config.notes_mode}")
+            )
+            return
+        mode = args[0].strip().lower()
+        if mode not in {"none", "auto"}:
+            self.messages.append(Message("error", "notes-mode must be none or auto."))
+            return
+        self.config.notes_mode = mode
+        self.messages.append(Message("system", f"notes_mode set to {mode}"))
 
     def _cmd_cwd(self, args: list[str], _line: str) -> None:
         if not args:
@@ -1030,31 +1052,88 @@ class HarnessCoderTui:
             return None
         return event
 
+    def _runtime_status_lines(self) -> list[str]:
+        if self.last_trace_path is None or not self.last_trace_path.is_file():
+            return [
+                "notes: -",
+                "context_quality: -",
+                "plan: -",
+            ]
+        try:
+            from harnesscoder.replay import summarize_trace
+
+            summary = summarize_trace(self.last_trace_path)
+        except Exception:
+            return [
+                "notes: unavailable",
+                "context_quality: unavailable",
+                "plan: unavailable",
+            ]
+        metrics = summary.get("metrics", {})
+        return [
+            "notes: "
+            f"injected={metrics.get('note_injected_count', 0)} "
+            f"created={metrics.get('note_created_count', 0)} "
+            f"retrieved={metrics.get('note_retrieved_count', 0)}",
+            "context_quality: "
+            f"score={metrics.get('average_context_quality_score', '-')}",
+            "plan: "
+            f"steps={metrics.get('plan_step_count', 0)} "
+            f"blocked={metrics.get('blocked_step_count', 0)} "
+            f"ratio={metrics.get('action_with_step_ratio', '-')}",
+        ]
+
+    def _append_runtime_summary(self, text: str, trace_path: Path) -> str:
+        try:
+            from harnesscoder.replay import summarize_trace
+
+            summary = summarize_trace(trace_path)
+        except Exception:
+            return text
+        metrics = summary.get("metrics", {})
+        lines = [
+            text,
+            "notes: "
+            f"injected={metrics.get('note_injected_count', 0)} "
+            f"created={metrics.get('note_created_count', 0)} "
+            f"retrieved={metrics.get('note_retrieved_count', 0)}",
+            "context_quality: "
+            f"score={metrics.get('average_context_quality_score', '-')}",
+            "plan: "
+            f"steps={metrics.get('plan_step_count', 0)} "
+            f"blocked={metrics.get('blocked_step_count', 0)} "
+            f"ratio={metrics.get('action_with_step_ratio', '-')}",
+        ]
+        return "\n".join(lines)
+
     def _summarize_trace(self, trace_path: Path) -> str:
-        counts: dict[str, int] = {}
+        from harnesscoder.replay import summarize_trace
+
+        summary = summarize_trace(trace_path)
+        counts = summary.get("event_counts", {})
+        metrics = summary.get("metrics", {})
+        lines = [
+            f"trace: {trace_path}",
+            f"run_id: {summary.get('run_id', trace_path.parent.name)}",
+            f"status: {summary.get('status', '-')}",
+            "event_counts: "
+            + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())),
+            f"notes: injected={metrics.get('note_injected_count', 0)} "
+            f"created={metrics.get('note_created_count', 0)} "
+            f"retrieved={metrics.get('note_retrieved_count', 0)}",
+            f"context_quality: score={metrics.get('average_context_quality_score', '-')}",
+            f"plan: steps={metrics.get('plan_step_count', 0)} "
+            f"blocked={metrics.get('blocked_step_count', 0)} "
+            f"ratio={metrics.get('action_with_step_ratio', '-')}",
+            "recent_events:",
+        ]
         events: list[dict[str, object]] = []
         for line in trace_path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():
                 continue
             event = json.loads(line)
-            event_type = str(event.get("type", "<missing>"))
-            counts[event_type] = counts.get(event_type, 0) + 1
-            events.append(event)
-
-        if not events:
-            raise ValueError(f"empty trace: {trace_path}")
-
-        run_id = events[0].get("run_id", trace_path.parent.name)
-        last = events[-1]
-        status = last.get("status", "-")
-        lines = [
-            f"trace: {trace_path}",
-            f"run_id: {run_id}",
-            f"status: {status}",
-            "event_counts: "
-            + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())),
-            "recent_events:",
-        ]
+            if isinstance(event, dict):
+                events.append(event)
         for event in events[-12:]:
             event_type = event.get("type", "<missing>")
             action = event.get("action")

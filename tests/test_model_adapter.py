@@ -123,6 +123,35 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
             {"path": "app.py", "old": "return 1", "new": "return 2"},
         )
 
+    def test_accepts_optional_plan_and_reflection_fields(self) -> None:
+        action = _model_action_from_payload(
+            {
+                "kind": "tool",
+                "rationale": "Inspect the file.",
+                "tool_name": "read_file",
+                "tool_args": {"path": "README.md"},
+                "current_step_id": "step_1",
+                "thought_summary": "Need the README first.",
+                "expected_observation": "README content",
+                "reflection": "Starting the first step.",
+                "plan_update": {
+                    "steps": [
+                        {
+                            "step_id": "step_1",
+                            "title": "Inspect README",
+                            "status": "in_progress",
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(action.current_step_id, "step_1")
+        self.assertEqual(action.thought_summary, "Need the README first.")
+        self.assertEqual(action.expected_observation, "README content")
+        self.assertEqual(action.reflection, "Starting the first step.")
+        self.assertEqual(action.plan_update["steps"][0]["title"], "Inspect README")
+
     def test_hc_bench_oracle_reads_case_id_from_task(self) -> None:
         state = AgentState(
             run_id="run_test",
@@ -406,6 +435,38 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertTrue(record["session_context_injected"])
         self.assertEqual(record["session_id"], "interview")
 
+    def test_context_assembly_injects_relevant_notes_and_quality(self) -> None:
+        state = AgentState(
+            run_id="run_test",
+            task="Investigate billing regression.",
+            cwd=".",
+            max_iterations=4,
+        )
+        context = assemble_context(
+            state=state,
+            system_instructions=MODEL_SYSTEM_PROMPT,
+            available_tools=["read_file"],
+            context_pack=build_context_pack(state),
+            context_mode="pack",
+            relevant_notes=[
+                {
+                    "note_id": "note_1",
+                    "type": "blocker",
+                    "title": "Billing blocker",
+                    "content": "Proration test fails.",
+                    "tags": ["billing"],
+                }
+            ],
+        )
+        payload = context.to_model_input()[1]["content"]
+        record = context.to_trace_record()
+
+        self.assertIn("relevant_notes", payload)
+        self.assertIn("Billing blocker", payload)
+        self.assertEqual(record["relevant_note_count"], 1)
+        self.assertIn("context_quality", record)
+        self.assertGreaterEqual(record["context_quality"]["score"], 0)
+
     def test_context_budget_records_section_reductions(self) -> None:
         state = AgentState(
             run_id="run_test",
@@ -585,6 +646,23 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("Full-suite failures may be unrelated", prompt)
         self.assertIn("remaining budget is low", prompt)
 
+    def test_system_prompt_describes_durable_note_tools(self) -> None:
+        prompt = " ".join(MODEL_SYSTEM_PROMPT.split())
+        self.assertIn("create_note", prompt)
+        self.assertIn("search_notes", prompt)
+        self.assertIn("durable task state", prompt)
+        self.assertIn("blockers, actions, task_state, decisions, conclusions", prompt)
+
+    def test_model_adapter_errors_have_categories(self) -> None:
+        self.assertEqual(_http_error_category(503), "provider_5xx")
+        self.assertEqual(_http_error_category(504), "timeout")
+        self.assertEqual(_http_error_category(429), "rate_limited")
+
+        with self.assertRaises(ModelAdapterError) as caught:
+            _parse_action_json("not json")
+
+        self.assertEqual(caught.exception.category, "action_parse_error")
+        self.assertEqual(caught.exception.to_trace_record()["retryable"], False)
 
 if __name__ == "__main__":
     unittest.main()

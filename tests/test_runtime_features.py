@@ -9,12 +9,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from harnesscoder.core.models import ModelAdapterError
+from harnesscoder.core.notes import NoteStore
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner, RunResult
 from harnesscoder.core.session import SessionStore
 from harnesscoder.core.state import AgentState, ModelAction
-from harnesscoder.core.models import ModelAdapterError
 from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.tools import (
     ToolRegistry,
@@ -260,7 +261,37 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.ok, result.error)
         self.assertIn("sample.py", result.output)
 
+    def test_note_tools_create_and_search_durable_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = ToolRegistry(root)
 
+            created = registry.create_note(
+                call_id="call_note",
+                title="Billing blocker",
+                content="Proration test fails for leap-year invoices.",
+                note_type="blocker",
+                tags=["billing", "proration"],
+            )
+            searched = registry.search_notes(
+                call_id="call_search_notes",
+                query="billing proration",
+                limit=3,
+            )
+            notes = NoteStore.for_workspace(root).list_all()
+            notes_root = NoteStore.for_workspace(root).root
+            self.assertTrue(created.ok, created.error)
+            self.assertTrue(searched.ok, searched.error)
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0].type, "blocker")
+            self.assertEqual(notes[0].source_call_id, "call_note")
+            self.assertIn(notes[0].note_id, searched.output)
+            self.assertEqual(searched.metadata["note_ids"], [notes[0].note_id])
+            note_file = notes_root / f"{notes[0].note_id}.md"
+            index_file = notes_root / "notes_index.json"
+            self.assertTrue(note_file.is_file())
+            self.assertTrue(index_file.is_file())
+            self.assertIn("Billing blocker", note_file.read_text(encoding="utf-8"))
 class ObservationArtifactTests(unittest.TestCase):
     def test_artifact_filename_sanitizes_call_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -417,6 +448,47 @@ class PolicyTests(unittest.TestCase):
 
         self.assertTrue(allowed.allowed, allowed.reason)
         self.assertFalse(denied.allowed)
+
+    def test_note_policy_validates_type_content_tags_and_limits(self) -> None:
+        policy = ToolPolicy()
+        root = Path.cwd()
+
+        allowed_create = policy.check(
+            "create_note",
+            {
+                "title": "Decision",
+                "content": "Use bounded note retrieval.",
+                "note_type": "decision",
+                "tags": ["context"],
+            },
+            root,
+        )
+        bad_type = policy.check(
+            "create_note",
+            {"title": "x", "content": "y", "note_type": "secret"},
+            root,
+        )
+        bad_tags = policy.check(
+            "create_note",
+            {"title": "x", "content": "y", "tags": ["ok", 3]},
+            root,
+        )
+        allowed_search = policy.check(
+            "search_notes",
+            {"query": "context decision", "limit": 5},
+            root,
+        )
+        bad_limit = policy.check(
+            "search_notes",
+            {"query": "context", "limit": 1000},
+            root,
+        )
+
+        self.assertTrue(allowed_create.allowed, allowed_create.reason)
+        self.assertFalse(bad_type.allowed)
+        self.assertFalse(bad_tags.allowed)
+        self.assertTrue(allowed_search.allowed, allowed_search.reason)
+        self.assertFalse(bad_limit.allowed)
 
 
 class ReplayTests(unittest.TestCase):
@@ -734,6 +806,124 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["metrics"]["session_context_loaded_count"], 1)
         self.assertEqual(summary["metrics"]["session_context_injected_count"], 1)
 
+    def test_runner_traces_note_creation_and_retrieval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                model=_CreateSearchNoteModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=4,
+            )
+
+            result = runner.run("Remember and retrieve a billing blocker.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            note_created = next(record for record in records if record["type"] == "note_created")
+            note_retrieved = next(record for record in records if record["type"] == "note_retrieved")
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(summary["metrics"]["note_created_count"], 1)
+        self.assertEqual(summary["metrics"]["note_retrieved_count"], 1)
+        self.assertEqual(note_created["note_type"], "blocker")
+        self.assertEqual(note_retrieved["note_count"], 1)
+
+    def test_runner_auto_injects_relevant_notes_and_scores_context_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = NoteStore.for_workspace(root)
+            store.create(
+                note_type="blocker",
+                title="Billing blocker",
+                content="Proration test fails for leap-year invoices.",
+                tags=["billing", "proration"],
+            )
+            runner = AgentRunner(
+                model=_CaptureContextModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+                context_mode="pack",
+            )
+
+            result = runner.run("Investigate billing proration regression.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            quality = next(
+                record
+                for record in records
+                if record["type"] == "context_quality_evaluated"
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertIn("relevant_notes", _CaptureContextModel.last_payload)
+        self.assertIn("Billing blocker", _CaptureContextModel.last_payload)
+        self.assertEqual(summary["metrics"]["note_injected_count"], 1)
+        self.assertIsNotNone(summary["metrics"]["average_context_quality_score"])
+        self.assertIn("score", quality)
+
+    def test_runner_traces_plan_step_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            runner = AgentRunner(
+                model=_PlanStepModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=3,
+            )
+
+            result = runner.run("Read README with a plan.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(result.status, "success")
+        self.assertTrue(any(record["type"] == "plan_created" for record in records))
+        self.assertTrue(any(record["type"] == "step_started" for record in records))
+        self.assertTrue(any(record["type"] == "step_completed" for record in records))
+        self.assertEqual(summary["metrics"]["plan_created_count"], 1)
+        self.assertEqual(summary["metrics"]["plan_step_count"], 1)
+        self.assertGreater(summary["metrics"]["action_with_step_ratio"], 0)
+
+    def test_runner_records_structured_model_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                model=_ProviderFailureModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=1,
+            )
+
+            result = runner.run("Trigger provider failure.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            model_error = next(record for record in records if record["type"] == "model_error")
+
+        self.assertEqual(result.status, "model_error")
+        self.assertEqual(model_error["category"], "provider_5xx")
+        self.assertEqual(model_error["status_code"], 503)
+        self.assertTrue(model_error["retryable"])
+        self.assertEqual(summary["failure_category"], "model_error:provider_5xx")
+        self.assertEqual(summary["metrics"]["model_error_count"], 1)
+        self.assertEqual(summary["metrics"]["transient_provider_error_count"], 1)
+        self.assertEqual(
+            summary["metrics"]["model_error_breakdown"],
+            {"provider_5xx": 1},
+        )
+
     def test_session_store_persists_runs_and_builds_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -982,8 +1172,6 @@ class _MetadataFinishModel:
             rationale="Done.",
             content="done",
         )
-
-
 class _RetryableErrorThenFinishModel:
     name = "retryable-error-then-finish"
 
@@ -997,6 +1185,36 @@ class _RetryableErrorThenFinishModel:
         return ModelAction(
             kind="finish",
             rationale="Retry produced a valid action.",
+            content="done",
+        )
+
+
+class _CreateSearchNoteModel:
+    name = "create-search-note"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.latest_observation_for("create_note") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Record a durable blocker before continuing.",
+                tool_name="create_note",
+                tool_args={
+                    "title": "Billing blocker",
+                    "content": "Proration test fails for leap-year invoices.",
+                    "note_type": "blocker",
+                    "tags": ["billing", "proration"],
+                },
+            )
+        if state.latest_observation_for("search_notes") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Retrieve the durable blocker to confirm note search works.",
+                tool_name="search_notes",
+                tool_args={"query": "billing proration", "limit": 5},
+            )
+        return ModelAction(
+            kind="finish",
+            rationale="The note was created and retrieved.",
             content="done",
         )
 
@@ -1034,6 +1252,39 @@ class _UnknownToolErrorModel:
     def next_action(self, _state: AgentState, _context=None) -> ModelAction:
         self.calls += 1
         raise ModelAdapterError("tool action requested unknown tool: fly_to_moon")
+
+
+class _PlanStepModel:
+    name = "plan-step"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.latest_observation_for("read_file") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Read the file for the current plan step.",
+                tool_name="read_file",
+                tool_args={"path": "README.md"},
+                current_step_id="step_1",
+                thought_summary="Need to inspect the README before answering.",
+                expected_observation="README content",
+                reflection="Starting the first planned inspection step.",
+                plan_update={
+                    "steps": [
+                        {
+                            "step_id": "step_1",
+                            "title": "Inspect README",
+                            "status": "in_progress",
+                        }
+                    ]
+                },
+            )
+        return ModelAction(
+            kind="finish",
+            rationale="The planned inspection is complete.",
+            content="done",
+            current_step_id="step_1",
+            reflection="The README provided enough context to finish.",
+        )
 
 
 class _FinishOnGraceModel:

@@ -22,10 +22,11 @@ from harnesscoder.core.models import (
     ModelAdapter,
     ModelAdapterError,
 )
+from harnesscoder.core.notes import MAX_NOTE_QUERY_CHARS, NoteStore
 from harnesscoder.core.policy import PolicyDecision, ToolPolicy
 from harnesscoder.core.prompt import ContextMode, assemble_context
 from harnesscoder.core.repo_map import RepoMapCache
-from harnesscoder.core.state import AgentState, ModelAction, ToolObservation
+from harnesscoder.core.state import AgentPlan, AgentState, ModelAction, PlanStep, ToolObservation
 from harnesscoder.core.tools import ToolRegistry, ToolResult
 from harnesscoder.core.trace import TraceWriter
 
@@ -34,6 +35,7 @@ RepoMapMode = Literal["none", "auto"]
 MODEL_RETRY_MAX_RETRIES = 4
 MODEL_RETRY_BASE_DELAY_SECONDS = 1.0
 MODEL_RETRY_MAX_DELAY_SECONDS = 30.0
+NotesMode = Literal["none", "auto"]
 
 
 @dataclass(slots=True)
@@ -60,6 +62,7 @@ class AgentRunner:
         model_retry_base_delay_seconds: float = MODEL_RETRY_BASE_DELAY_SECONDS,
         model_retry_max_delay_seconds: float = MODEL_RETRY_MAX_DELAY_SECONDS,
         model_retry_sleep: Callable[[float], None] | None = None,
+        notes_mode: NotesMode = "auto",
     ) -> None:
         self.model = model
         self.cwd = cwd.resolve()
@@ -69,6 +72,7 @@ class AgentRunner:
         self.policy = policy or ToolPolicy()
         self.tools = tools or ToolRegistry(self.cwd)
         self.repo_map = RepoMapCache(self.cwd)
+        self.note_store = NoteStore.for_workspace(self.cwd)
         self.repo_map_max_tokens = repo_map_max_tokens
         self.repo_map_mode = repo_map_mode
         self.model_retry_max_retries = max(0, int(model_retry_max_retries))
@@ -81,6 +85,7 @@ class AgentRunner:
             float(model_retry_max_delay_seconds),
         )
         self._model_retry_sleep = model_retry_sleep or time.sleep
+        self.notes_mode = notes_mode
         self._stable_prefix_hash: str | None = None
 
     def run(
@@ -88,8 +93,9 @@ class AgentRunner:
         task: str,
         *,
         session_context: dict[str, Any] | None = None,
+        run_id: str | None = None,
     ) -> RunResult:
-        run_id = self._new_run_id()
+        run_id = run_id or self._new_run_id()
         trace = TraceWriter(run_id=run_id, trace_root=self.trace_root, cwd=self.cwd)
         state = AgentState(
             run_id=run_id,
@@ -110,6 +116,7 @@ class AgentRunner:
             context_mode=self.context_mode,
             repo_map_max_tokens=self.repo_map_max_tokens,
             repo_map_mode=self.repo_map_mode,
+            notes_mode=self.notes_mode,
             session_id=_session_id(session_context),
             session_turn_count=_session_turn_count(session_context),
             session_context_injected=session_context is not None,
@@ -162,6 +169,7 @@ class AgentRunner:
         status = "success"
         while not state.done and state.iterations < state.max_iterations:
             context_pack = build_context_pack(state)
+            relevant_notes = self._select_relevant_notes(state)
             repo_map_result = None
             if self.context_mode in {"pack", "memory"} and self.repo_map_mode == "auto":
                 repo_map_result = self.repo_map.render(
@@ -186,6 +194,7 @@ class AgentRunner:
                 available_tools=self._available_tools(),
                 context_pack=context_pack,
                 context_mode=self.context_mode,
+                relevant_notes=relevant_notes,
                 repo_map=repo_map_result.text if repo_map_result is not None else None,
                 session_context=state.session_context,
             )
@@ -203,6 +212,22 @@ class AgentRunner:
                 **context.to_trace_record(),
                 **context_pack,
             )
+            trace.emit(
+                "context_quality_evaluated",
+                score=(context.context_quality or {}).get("score"),
+                information_density=(context.context_quality or {}).get("information_density"),
+                relevance=(context.context_quality or {}).get("relevance"),
+                completeness=(context.context_quality or {}).get("completeness"),
+                warnings=(context.context_quality or {}).get("warnings", []),
+                suggestions=(context.context_quality or {}).get("suggestions", []),
+            )
+            for note in relevant_notes:
+                trace.emit(
+                    "note_injected",
+                    note_id=note.get("note_id"),
+                    note_type=note.get("type"),
+                    title=note.get("title"),
+                )
 
             try:
                 action = self._next_model_action_with_retry(
@@ -227,6 +252,7 @@ class AgentRunner:
                 return RunResult(state.run_id, status, answer, trace.trace_path)
 
             state.append_action(action)
+            self._apply_plan_update(state, action, trace)
             trace.emit("model_action", action=action.to_record())
 
             if action.kind == "finish":
@@ -289,6 +315,24 @@ class AgentRunner:
                     injected=False,
                     **result.metadata,
                 )
+            if result.tool_name == "create_note" and result.ok:
+                trace.emit(
+                    "note_created",
+                    call_id=result.call_id,
+                    note_id=result.metadata.get("note_id"),
+                    note_type=result.metadata.get("note_type"),
+                    title=result.metadata.get("title"),
+                    tags=result.metadata.get("tags", []),
+                )
+            if result.tool_name == "search_notes" and result.ok:
+                trace.emit(
+                    "note_retrieved",
+                    call_id=result.call_id,
+                    query=result.metadata.get("query"),
+                    note_type=result.metadata.get("note_type"),
+                    note_count=result.metadata.get("note_count", 0),
+                    note_ids=result.metadata.get("note_ids", []),
+                )
             if result.tool_name == "run_tests":
                 trace.emit(
                     "test_result",
@@ -325,6 +369,7 @@ class AgentRunner:
                     available_tools=[],
                     context_pack=context_pack,
                     context_mode=self.context_mode,
+                    relevant_notes=self._select_relevant_notes(state),
                     repo_map=None,
                     session_context=state.session_context,
                 )
@@ -556,6 +601,100 @@ class AgentRunner:
             checkpoint_path=str(checkpoint_path),
             state=state.snapshot(),
         )
+
+    def _select_relevant_notes(self, state: AgentState) -> list[dict[str, Any]]:
+        if self.notes_mode != "auto":
+            return []
+        query = " ".join(state.task.split())
+        if len(query) > MAX_NOTE_QUERY_CHARS:
+            query = query[:MAX_NOTE_QUERY_CHARS].rstrip()
+        try:
+            notes = self.note_store.search(query=query, limit=6)
+        except ValueError:
+            return []
+        priority = {
+            "blocker": 0,
+            "task_state": 1,
+            "verified_fact": 2,
+            "decision": 3,
+            "action": 4,
+            "conclusion": 5,
+            "general": 6,
+        }
+        notes.sort(
+            key=lambda note: (
+                priority.get(note.type, 99),
+                note.updated_at,
+                note.note_id,
+            )
+        )
+        return [note.to_record() for note in notes]
+
+    def _apply_plan_update(
+        self,
+        state: AgentState,
+        action: ModelAction,
+        trace: TraceWriter,
+    ) -> None:
+        if action.reflection:
+            state.plan.last_reflection = action.reflection
+        if action.plan_update:
+            state.plan.revision += 1
+            updated_steps = self._plan_steps_from_update(action.plan_update)
+            if state.plan.steps:
+                trace.emit(
+                    "plan_updated",
+                    revision=state.plan.revision,
+                    steps=[step.to_record() for step in updated_steps],
+                )
+            else:
+                trace.emit(
+                    "plan_created",
+                    revision=state.plan.revision,
+                    steps=[step.to_record() for step in updated_steps],
+                )
+            state.plan.steps = updated_steps
+        if action.current_step_id:
+            step = self._find_plan_step(state.plan, action.current_step_id)
+            if step is None:
+                step = PlanStep(
+                    step_id=action.current_step_id,
+                    title=action.current_step_id,
+                    status="in_progress",
+                )
+                state.plan.steps.append(step)
+            if step.status == "pending":
+                step.status = "in_progress"
+            trace.emit(
+                "step_started",
+                step_id=step.step_id,
+                title=step.title,
+                expected_observation=action.expected_observation,
+            )
+            if action.kind == "finish":
+                step.status = "completed"
+                trace.emit("step_completed", step_id=step.step_id, title=step.title)
+
+    def _plan_steps_from_update(self, plan_update: dict[str, Any]) -> list[PlanStep]:
+        raw_steps = plan_update.get("steps", [])
+        if not isinstance(raw_steps, list):
+            return []
+        steps: list[PlanStep] = []
+        for index, item in enumerate(raw_steps, start=1):
+            if not isinstance(item, dict):
+                continue
+            step_id = str(item.get("step_id") or f"step_{index}")
+            title = str(item.get("title") or step_id)
+            status = str(item.get("status") or "pending")
+            details = str(item["details"]) if item.get("details") is not None else None
+            steps.append(PlanStep(step_id=step_id, title=title, status=status, details=details))
+        return steps
+
+    def _find_plan_step(self, plan: AgentPlan, step_id: str) -> PlanStep | None:
+        for step in plan.steps:
+            if step.step_id == step_id:
+                return step
+        return None
 
     def _classify_test_result(self, result: ToolResult) -> str | None:
         if result.ok:

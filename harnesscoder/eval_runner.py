@@ -222,6 +222,7 @@ def run_eval_cases(
     model: ModelAdapter | None = None,
     context_mode: ContextMode = "none",
     repo_map_mode: RepoMapMode = "auto",
+    notes_mode: str = "auto",
     allow_policy_recovery: bool = True,
 ) -> list[EvalResult]:
     root = Path(workspace_root).resolve()
@@ -247,6 +248,7 @@ def run_eval_cases(
             max_iterations=effective_max_iterations,
             context_mode=context_mode,
             repo_map_mode=repo_map_mode,
+            notes_mode=notes_mode,
             policy=ToolPolicy(set(case.allowed_tools) if case.allowed_tools else None),
         )
         run_result = runner.run(case.task)
@@ -342,6 +344,7 @@ def run_eval_matrix(
     max_iterations: int = 8,
     context_mode: ContextMode = "none",
     repo_map_mode: RepoMapMode = "auto",
+    notes_mode: str = "auto",
     allow_policy_recovery: bool = True,
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
@@ -370,6 +373,7 @@ def run_eval_matrix(
             model=model,
             context_mode=context_mode,
             repo_map_mode=repo_map_mode,
+            notes_mode=notes_mode,
             allow_policy_recovery=allow_policy_recovery,
         )
         matrix.append(
@@ -391,6 +395,7 @@ def run_context_ablation_matrix(
     profile: ModelProfile | None = None,
     trace_root: str | Path = ".harnesscoder/eval-runs",
     max_iterations: int = 8,
+    notes_mode: str = "auto",
     ablations: list[ContextAblation] | None = None,
 ) -> list[EvalMatrixProfileResult]:
     matrix: list[EvalMatrixProfileResult] = []
@@ -409,6 +414,7 @@ def run_context_ablation_matrix(
                 model=model,
                 context_mode=ablation.context_mode,
                 repo_map_mode=ablation.repo_map_mode,
+                notes_mode=notes_mode,
                 allow_policy_recovery=ablation.allow_policy_recovery,
             )
         except Exception as exc:
@@ -1626,12 +1632,24 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         "observation_compression_ratio",
         "context_packed_count",
         "context_injected_count",
+        "average_context_quality_score",
+        "low_quality_context_count",
+        "low_relevance_context_count",
+        "low_completeness_context_count",
         "estimated_context_tokens",
         "stable_prefix_tokens",
         "dynamic_suffix_tokens",
         "stable_prefix_change_count",
         "memory_updated_count",
         "model_retry_count",
+        "note_created_count",
+        "note_retrieved_count",
+        "note_injected_count",
+        "plan_created_count",
+        "plan_updated_count",
+        "plan_step_count",
+        "blocked_step_count",
+        "action_with_step_ratio",
         "compression_count",
         "hot_observation_count",
         "cold_summary_chars",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ MODEL_TOOL_NAMES = (
     "edit_file",
     "run_tests",
     "run_command",
+    "create_note",
+    "search_notes",
 )
 TOOL_NAME_ALIASES = {
     "read": "read_file",
@@ -79,6 +82,36 @@ class ModelAdapter(Protocol):
 
 class ModelAdapterError(RuntimeError):
     """Raised when a model adapter cannot produce a valid action."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: str = "adapter_error",
+        status_code: int | None = None,
+        retryable: bool = False,
+        response_excerpt: str | None = None,
+        provider_error_type: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.category = category
+        self.status_code = status_code
+        self.retryable = retryable
+        self.response_excerpt = response_excerpt
+        self.provider_error_type = provider_error_type
+
+    def to_trace_record(self) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "category": self.category,
+            "retryable": self.retryable,
+        }
+        if self.status_code is not None:
+            record["status_code"] = self.status_code
+        if self.response_excerpt:
+            record["response_excerpt"] = self.response_excerpt
+        if self.provider_error_type:
+            record["provider_error_type"] = self.provider_error_type
+        return record
 
 
 class ScriptedModel:
@@ -323,14 +356,22 @@ Allowed tool action:
   "kind": "tool",
   "rationale": "why this tool call is the next useful step",
   "tool_name": "read_file | search_code | repo_map | write_file | edit_file | run_tests | run_command",
-  "tool_args": {}
+  "tool_args": {},
+  "thought_summary": "brief non-sensitive reasoning summary",
+  "current_step_id": "step identifier from the current plan",
+  "expected_observation": "what this tool call should tell you",
+  "reflection": "optional short reflection on the last observation",
+  "plan_update": {
+    "steps": [{"step_id": "step_1", "title": "inspect tests", "status": "in_progress"}]
+  }
 }
 
 Allowed finish action:
 {
   "kind": "finish",
   "rationale": "why enough information has been gathered",
-  "content": "final answer to the user"
+  "content": "final answer to the user",
+  "reflection": "optional short reflection on what resolved the task"
 }
 
 Use only tools listed in the current task's available_tools.
@@ -353,12 +394,17 @@ Tool schemas:
 - edit_file(path: string, old: string, new: string)
 - run_tests(cmd: string | null = null, timeout: int = 60)
 - run_command(cmd: string, timeout: int = 30)
+- create_note(title: string, content: string, note_type: string = "general", tags: string[] = [])
+- search_notes(query: string, limit: int = 5, note_type: string | null = null)
 
 Use write_file for new files in greenfield tasks. Use edit_file only for exact
 replacements where old is expected to match once. Prefer run_tests for local
 python/pytest/unittest test execution. Reserve run_command for repository
 inspection and other policy-allowed commands. The policy layer may deny unsafe
-commands.
+commands. Use create_note only for durable task state that should survive the
+current run: blockers, actions, task_state, decisions, conclusions, or verified
+facts. Use search_notes when continuing long-running codebase work and prior
+blockers, task state, decisions, or verified facts may affect the next action.
 Answer in the user's language when finishing."""
 
 
@@ -440,20 +486,43 @@ def _post_json(
             raw_body = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
+        excerpt = _clip(error_body, 2000)
         raise ModelAdapterError(
-            f"model API returned HTTP {exc.code}: {_clip(error_body, 2000)}"
+            f"model API returned HTTP {exc.code}: {excerpt}",
+            category=_http_error_category(exc.code),
+            status_code=exc.code,
+            retryable=_http_error_retryable(exc.code),
+            response_excerpt=excerpt,
+            provider_error_type=_provider_error_type(error_body),
         ) from exc
     except urllib.error.URLError as exc:
-        raise ModelAdapterError(f"model API request failed: {exc}") from exc
+        raise ModelAdapterError(
+            f"model API request failed: {exc}",
+            category="connection_error",
+            retryable=True,
+        ) from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise ModelAdapterError(
+            f"model API request timed out: {exc}",
+            category="timeout",
+            retryable=True,
+        ) from exc
 
     try:
         parsed = json.loads(raw_body)
     except json.JSONDecodeError as exc:
+        excerpt = _clip(raw_body, 2000)
         raise ModelAdapterError(
-            f"model API returned non-JSON response: {_clip(raw_body, 2000)}"
+            f"model API returned non-JSON response: {excerpt}",
+            category="invalid_json_response",
+            retryable=True,
+            response_excerpt=excerpt,
         ) from exc
     if not isinstance(parsed, dict):
-        raise ModelAdapterError("model API response must be a JSON object")
+        raise ModelAdapterError(
+            "model API response must be a JSON object",
+            category="invalid_json_response",
+        )
     return parsed
 
 
@@ -511,7 +580,10 @@ def _extract_response_text(response: dict[str, Any]) -> str:
                 if text:
                     return text
 
-    raise ModelAdapterError("model API response did not include text output")
+    raise ModelAdapterError(
+        "model API response did not include text output",
+        category="missing_text_output",
+    )
 
 
 def _parse_action_json(text: str) -> dict[str, Any]:
@@ -531,12 +603,34 @@ def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
     rationale = payload.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
         rationale = "Model did not provide a rationale."
+    thought_summary = _optional_payload_string(payload.get("thought_summary"))
+    current_step_id = _optional_payload_string(payload.get("current_step_id"))
+    expected_observation = _optional_payload_string(payload.get("expected_observation"))
+    reflection = _optional_payload_string(payload.get("reflection"))
+    plan_update = payload.get("plan_update")
+    if plan_update is not None and not isinstance(plan_update, dict):
+        raise ModelAdapterError(
+            "plan_update must be an object when provided",
+            category="action_schema_error",
+        )
 
     if kind == "finish":
         content = payload.get("content") or payload.get("final_answer") or ""
         if not isinstance(content, str):
-            raise ModelAdapterError("finish action content must be a string")
-        return ModelAction(kind="finish", rationale=rationale, content=content)
+            raise ModelAdapterError(
+                "finish action content must be a string",
+                category="action_schema_error",
+            )
+        return ModelAction(
+            kind="finish",
+            rationale=rationale,
+            content=content,
+            thought_summary=thought_summary,
+            current_step_id=current_step_id,
+            expected_observation=expected_observation,
+            reflection=reflection,
+            plan_update=dict(plan_update) if isinstance(plan_update, dict) else None,
+        )
 
     if kind == "tool":
         tool_name = payload.get("tool_name")
@@ -552,6 +646,11 @@ def _model_action_from_payload(payload: dict[str, Any]) -> ModelAction:
             rationale=rationale,
             tool_name=tool_name,
             tool_args=tool_args,
+            thought_summary=thought_summary,
+            current_step_id=current_step_id,
+            expected_observation=expected_observation,
+            reflection=reflection,
+            plan_update=dict(plan_update) if isinstance(plan_update, dict) else None,
         )
 
     raise ModelAdapterError("model action kind must be either 'tool' or 'finish'")
@@ -788,3 +887,45 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+
+
+def _optional_payload_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ModelAdapterError(
+            "optional action text fields must be strings",
+            category="action_schema_error",
+        )
+    stripped = value.strip()
+    return stripped or None
+
+
+def _http_error_category(status_code: int) -> str:
+    if status_code == 429:
+        return "rate_limited"
+    if status_code in {408, 504}:
+        return "timeout"
+    if 500 <= status_code <= 599:
+        return "provider_5xx"
+    if 400 <= status_code <= 499:
+        return "provider_4xx"
+    return "http_error"
+
+
+def _http_error_retryable(status_code: int) -> bool:
+    return status_code == 429 or status_code in {408, 409, 425} or 500 <= status_code <= 599
+
+
+def _provider_error_type(body: str) -> str | None:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    value = error.get("type")
+    return value if isinstance(value, str) and value else None

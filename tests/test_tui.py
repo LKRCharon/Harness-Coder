@@ -224,7 +224,28 @@ class TuiRenderLogicTests(unittest.TestCase):
             tui = HarnessCoderTui(config)
             trace_path = cwd / ".harnesscoder/runs/run_done/trace.jsonl"
             trace_path.parent.mkdir(parents=True)
-            trace_path.write_text('{"type":"run_finished","status":"success"}\n')
+            trace_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "run_started", "run_id": "run_done"}),
+                        json.dumps({"type": "note_injected", "run_id": "run_done"}),
+                        json.dumps(
+                            {
+                                "type": "context_quality_evaluated",
+                                "run_id": "run_done",
+                                "score": 0.75,
+                                "relevance": 0.8,
+                                "completeness": 0.7,
+                            }
+                        ),
+                        json.dumps({"type": "plan_created", "run_id": "run_done"}),
+                        json.dumps({"type": "step_started", "run_id": "run_done", "step_id": "step_1"}),
+                        json.dumps({"type": "run_finished", "run_id": "run_done", "status": "success"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             tui._active_run = ActiveRun(
                 prompt="task",
                 config=config,
@@ -245,6 +266,7 @@ class TuiRenderLogicTests(unittest.TestCase):
             self.assertIsNone(tui._active_run)
             self.assertEqual(tui.last_trace_path, trace_path)
             self.assertTrue(any(message.text.startswith("done") for message in tui.messages))
+            self.assertTrue(any("notes:" in message.text for message in tui.messages))
 
     def test_snapshot_config_preserves_context_and_repo_map_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -252,12 +274,14 @@ class TuiRenderLogicTests(unittest.TestCase):
             config = make_config(cwd)
             config.context_mode = "memory"
             config.repo_map_mode = "none"
+            config.notes_mode = "none"
             tui = HarnessCoderTui(config)
 
             snapshot = tui._snapshot_config()
 
         self.assertEqual(snapshot.context_mode, "memory")
         self.assertEqual(snapshot.repo_map_mode, "none")
+        self.assertEqual(snapshot.notes_mode, "none")
 
     def test_snapshot_config_preserves_session_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -318,6 +342,18 @@ class TuiRenderLogicTests(unittest.TestCase):
         self.assertEqual(config.reasoning_effort, "high")
         self.assertTrue(any("reasoning_effort set to high" in message.text for message in tui.messages))
 
+    def test_notes_mode_command_updates_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            config = make_config(cwd)
+            tui = HarnessCoderTui(config)
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/notes-mode none", screen)
+
+        self.assertEqual(config.notes_mode, "none")
+        self.assertTrue(any("notes_mode set to none" in message.text for message in tui.messages))
+
     def test_snapshot_config_preserves_reasoning_effort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
@@ -354,6 +390,44 @@ class TuiRenderLogicTests(unittest.TestCase):
             ]
             run_started = next(event for event in events if event["type"] == "run_started")
             self.assertEqual(run_started["context_mode"], "pack")
+
+    def test_status_reports_runtime_summary_when_trace_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            trace_path = cwd / ".harnesscoder/runs/run_demo/trace.jsonl"
+            trace_path.parent.mkdir(parents=True)
+            trace_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "run_started", "run_id": "run_demo"}),
+                        json.dumps({"type": "note_injected", "run_id": "run_demo"}),
+                        json.dumps(
+                            {
+                                "type": "context_quality_evaluated",
+                                "run_id": "run_demo",
+                                "score": 0.8,
+                                "relevance": 0.9,
+                                "completeness": 0.7,
+                            }
+                        ),
+                        json.dumps({"type": "plan_created", "run_id": "run_demo"}),
+                        json.dumps({"type": "step_started", "run_id": "run_demo", "step_id": "step_1"}),
+                        json.dumps({"type": "run_finished", "run_id": "run_demo", "status": "success"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            tui = HarnessCoderTui(make_config(cwd))
+            tui.last_trace_path = trace_path
+            screen = _FakeScreen(height=10, width=40)
+
+            tui._handle_slash_command("/status", screen)
+
+        status_text = tui.messages[-1].text
+        self.assertIn("notes:", status_text)
+        self.assertIn("context_quality:", status_text)
+        self.assertIn("plan:", status_text)
 
     def test_run_agent_background_persists_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

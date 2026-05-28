@@ -15,6 +15,7 @@ CONTEXT_SECTION_BUDGETS = {
     "system": 12000,
     "task_contract": 2400,
     "available_tools": 3600,
+    "relevant_notes": 6000,
     "packed_context": 16000,
     "working_memory": 4800,
     "repo_map": 8000,
@@ -30,6 +31,7 @@ class ContextAssembly:
     system_instructions: str
     task_contract: dict[str, Any]
     available_tools: list[str]
+    relevant_notes: list[dict[str, Any]]
     recent_observations: list[dict[str, Any]]
     packed_context: dict[str, Any] | None
     working_memory: str | None
@@ -40,11 +42,13 @@ class ContextAssembly:
     prompt_fingerprint: dict[str, str]
     prompt_sections: dict[str, int]
     context_budget: dict[str, Any]
+    context_quality: dict[str, Any] | None
 
     def to_model_input(self) -> list[dict[str, str]]:
         payload = {
             "task_contract": self.task_contract,
             "available_tools": self.available_tools,
+            "relevant_notes": self.relevant_notes,
             "recent_observations": self.recent_observations,
         }
         if self.packed_context is not None:
@@ -67,6 +71,17 @@ class ContextAssembly:
             "estimated_tokens": self.estimated_tokens,
             "task_contract": self.task_contract,
             "available_tools": list(self.available_tools),
+            "relevant_note_count": len(self.relevant_notes),
+            "relevant_note_ids": [
+                note.get("note_id")
+                for note in self.relevant_notes
+                if isinstance(note, dict) and note.get("note_id") is not None
+            ],
+            "relevant_note_types": [
+                note.get("type")
+                for note in self.relevant_notes
+                if isinstance(note, dict) and note.get("type") is not None
+            ],
             "recent_observation_count": len(self.recent_observations),
             "working_memory_injected": self.working_memory is not None,
             "repo_map_injected": self.repo_map is not None,
@@ -89,6 +104,7 @@ class ContextAssembly:
             "stable_prefix_tokens": self.prompt_sections["stable_prefix_tokens"],
             "semi_stable_tokens": self.prompt_sections["semi_stable_tokens"],
             "dynamic_suffix_tokens": self.prompt_sections["dynamic_suffix_tokens"],
+            "context_quality": dict(self.context_quality or {}),
         }
 
 
@@ -99,6 +115,7 @@ def assemble_context(
     available_tools: list[str],
     context_pack: dict[str, Any],
     context_mode: ContextMode,
+    relevant_notes: list[dict[str, Any]] | None = None,
     repo_map: str | None = None,
     session_context: dict[str, Any] | None = None,
 ) -> ContextAssembly:
@@ -108,12 +125,14 @@ def assemble_context(
     raw_recent_observations = (
         _recent_observations(state) if context_mode == "none" else []
     )
+    raw_relevant_notes = list(relevant_notes or [])
     raw_task_contract = {
         "task": state.task,
         "cwd": state.cwd,
         "iterations": state.iterations,
         "max_iterations": state.max_iterations,
         "phase": state.phase,
+        "plan": state.plan.to_record(),
     }
     raw_packed_context = context_pack if context_mode in {"pack", "memory"} else None
     raw_working_memory = (
@@ -128,6 +147,7 @@ def assemble_context(
             "system": system_instructions,
             "task_contract": raw_task_contract,
             "available_tools": available_tools,
+            "relevant_notes": raw_relevant_notes,
             "packed_context": raw_packed_context,
             "working_memory": raw_working_memory,
             "repo_map": raw_repo_map,
@@ -141,6 +161,7 @@ def assemble_context(
         system_instructions=str(sections["system"]),
         task_contract=dict(sections["task_contract"]),
         available_tools=list(sections["available_tools"]),
+        relevant_notes=list(sections["relevant_notes"]),
         recent_observations=list(sections["recent_observations"]),
         packed_context=_optional_dict(sections["packed_context"]),
         working_memory=_optional_str(sections["working_memory"]),
@@ -151,14 +172,17 @@ def assemble_context(
         prompt_fingerprint={},
         prompt_sections={},
         context_budget=context_budget,
+        context_quality=None,
     )
     estimated_tokens = estimate_tokens(assembly.to_model_input())
     prompt_fingerprint, prompt_sections = prompt_cache_governance(assembly)
+    context_quality = evaluate_context_quality(assembly, context_pack=context_pack)
     return ContextAssembly(
         mode=assembly.mode,
         system_instructions=assembly.system_instructions,
         task_contract=assembly.task_contract,
         available_tools=assembly.available_tools,
+        relevant_notes=assembly.relevant_notes,
         recent_observations=assembly.recent_observations,
         packed_context=assembly.packed_context,
         working_memory=assembly.working_memory,
@@ -169,6 +193,7 @@ def assemble_context(
         prompt_fingerprint=prompt_fingerprint,
         prompt_sections=prompt_sections,
         context_budget=context_budget,
+        context_quality=context_quality,
     )
 
 
@@ -398,6 +423,7 @@ def prompt_cache_governance(
     stable_prefix = {
         "system_instructions": assembly.system_instructions,
         "available_tools": list(assembly.available_tools),
+        "relevant_notes": assembly.relevant_notes,
     }
     semi_stable = {
         "task_contract": assembly.task_contract,
@@ -411,6 +437,7 @@ def prompt_cache_governance(
     }
     context_payload = {
         "task_contract": assembly.task_contract,
+        "relevant_notes": assembly.relevant_notes,
         "packed_context": assembly.packed_context,
         "working_memory": assembly.working_memory,
         "repo_map": assembly.repo_map,
@@ -449,3 +476,116 @@ def _recent_observations(state: AgentState) -> list[dict[str, Any]]:
         }
         for observation in state.observations[-8:]
     ]
+
+
+def evaluate_context_quality(
+    assembly: ContextAssembly,
+    *,
+    context_pack: dict[str, Any],
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    suggestions: list[str] = []
+
+    reduced_sections = set(assembly.context_budget.get("reduced_sections", []))
+    dropped_blocks = int(assembly.context_budget.get("dropped_blocks", 0))
+    total_budget = max(1, int(assembly.context_budget.get("total_budget", 0)))
+    total_chars = int(assembly.context_budget.get("total_chars", 0))
+    budget_ratio = min(1.0, total_chars / total_budget)
+
+    note_count = len(assembly.relevant_notes)
+    repo_map_present = assembly.repo_map is not None and bool(assembly.repo_map.strip())
+    recent_obs_count = len(assembly.recent_observations)
+    hot_context = context_pack.get("hot_context")
+    recent_failures = (
+        hot_context.get("recent_failures", [])
+        if isinstance(hot_context, dict)
+        else []
+    )
+    cold_summary = context_pack.get("cold_trace_summary")
+    older_errors = (
+        cold_summary.get("recent_older_errors", [])
+        if isinstance(cold_summary, dict)
+        else []
+    )
+
+    unique_observations = {
+        (
+            item.get("tool_name"),
+            item.get("output"),
+            item.get("error"),
+        )
+        for item in assembly.recent_observations
+        if isinstance(item, dict)
+    }
+    repetition_ratio = (
+        0.0
+        if recent_obs_count == 0
+        else 1.0 - (len(unique_observations) / max(1, recent_obs_count))
+    )
+
+    density = 1.0 - max(0.0, repetition_ratio * 0.7)
+    if dropped_blocks > 0:
+        density -= min(0.3, dropped_blocks * 0.05)
+    if budget_ratio < 0.35:
+        density -= 0.15
+    density = _clamp_score(density)
+
+    relevance = 0.55
+    if note_count > 0:
+        relevance += 0.2
+    if repo_map_present:
+        relevance += 0.15
+    if recent_obs_count > 0:
+        relevance += 0.1
+    if "relevant_notes" in reduced_sections:
+        relevance -= 0.15
+    if repetition_ratio > 0.5:
+        relevance -= 0.2
+    relevance = _clamp_score(relevance)
+
+    completeness = 0.45
+    if note_count > 0:
+        completeness += 0.2
+    if repo_map_present:
+        completeness += 0.15
+    if recent_failures:
+        completeness += 0.1
+    if older_errors and "packed_context" in reduced_sections:
+        completeness -= 0.2
+    completeness = _clamp_score(completeness)
+
+    if not note_count:
+        warnings.append("relevant notes missing")
+        suggestions.append("retrieve blocker, task_state, or verified_fact notes")
+    if not repo_map_present and assembly.mode in {"pack", "memory"}:
+        warnings.append("repo map missing")
+        suggestions.append("inject repo_map for repository structure grounding")
+    if dropped_blocks > 0:
+        warnings.append("context budget dropped blocks")
+        suggestions.append("shrink lower-value sections before dropping evidence")
+    if older_errors and "packed_context" in reduced_sections:
+        warnings.append("older failures may be compressed away")
+        suggestions.append("preserve recent_older_errors when failures are unresolved")
+    if repetition_ratio > 0.5:
+        warnings.append("repeated observations dominate context")
+        suggestions.append("deduplicate repeated tool observations")
+
+    overall = round((density + relevance + completeness) / 3, 3)
+    return {
+        "score": overall,
+        "information_density": round(density, 3),
+        "relevance": round(relevance, 3),
+        "completeness": round(completeness, 3),
+        "warnings": warnings,
+        "suggestions": suggestions,
+        "repetition_ratio": round(repetition_ratio, 3),
+        "budget_utilization": round(budget_ratio, 3),
+    }
+
+
+def _clamp_score(value: float) -> float:
+    if value < 0:
+        return 0.0
+    if value > 1:
+        return 1.0
+    return value

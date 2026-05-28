@@ -241,9 +241,21 @@ def _metrics_summary(
         "stable_prefix_change_count": _stable_prefix_change_count(records),
         "memory_updated_count": _event_count(records, "memory_updated"),
         "model_retry_count": _event_count(records, "model_retry"),
+        "note_created_count": _event_count(records, "note_created"),
+        "note_retrieved_count": _event_count(records, "note_retrieved"),
+        "note_injected_count": _event_count(records, "note_injected"),
         "repo_map_built_count": _event_count(records, "repo_map_built"),
         "repo_map_used_count": _event_count(records, "repo_map_used"),
         "repo_map_injected_count": _repo_map_injected_count(records),
+        "average_context_quality_score": _average_context_quality_score(records),
+        "low_quality_context_count": _low_context_dimension_count(records, "score", 0.5),
+        "low_relevance_context_count": _low_context_dimension_count(records, "relevance", 0.5),
+        "low_completeness_context_count": _low_context_dimension_count(records, "completeness", 0.5),
+        "plan_created_count": _event_count(records, "plan_created"),
+        "plan_updated_count": _event_count(records, "plan_updated"),
+        "plan_step_count": _plan_step_count(records),
+        "blocked_step_count": _event_count(records, "step_blocked"),
+        "action_with_step_ratio": _action_with_step_ratio(records),
         "first_repo_map_target_step": _first_repo_map_target_step(records),
         "compression_count": _compression_count(records),
         "hot_observation_count": _hot_observation_count(records),
@@ -494,6 +506,63 @@ def _repo_map_injected_count(records: list[JsonRecord]) -> int:
         if record.get("type") == "context_packed"
         and record.get("repo_map_injected") is True
     )
+
+
+def _average_context_quality_score(records: list[JsonRecord]) -> float | None:
+    scores: list[float] = []
+    for record in records:
+        if record.get("type") != "context_quality_evaluated":
+            continue
+        score = record.get("score")
+        if isinstance(score, (int, float)):
+            scores.append(float(score))
+    if not scores:
+        return None
+    return round(sum(scores) / len(scores), 3)
+
+
+def _low_context_dimension_count(
+    records: list[JsonRecord],
+    key: str,
+    threshold: float,
+) -> int:
+    total = 0
+    for record in records:
+        if record.get("type") != "context_quality_evaluated":
+            continue
+        value = record.get(key)
+        if isinstance(value, (int, float)) and float(value) < threshold:
+            total += 1
+    return total
+
+
+def _plan_step_count(records: list[JsonRecord]) -> int:
+    seen: set[str] = set()
+    for record in records:
+        if record.get("type") != "step_started":
+            continue
+        step_id = record.get("step_id")
+        if isinstance(step_id, str) and step_id:
+            seen.add(step_id)
+    return len(seen)
+
+
+def _action_with_step_ratio(records: list[JsonRecord]) -> float | None:
+    total = 0
+    with_step = 0
+    for record in records:
+        if record.get("type") != "model_action":
+            continue
+        action = record.get("action")
+        if not isinstance(action, dict):
+            continue
+        total += 1
+        step_id = action.get("current_step_id")
+        if isinstance(step_id, str) and step_id:
+            with_step += 1
+    if total == 0:
+        return None
+    return round(with_step / total, 3)
 
 
 def _first_repo_map_target_step(records: list[JsonRecord]) -> int | None:

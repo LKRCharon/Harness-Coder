@@ -9,7 +9,49 @@ This roadmap is intentionally conservative. The project should not grow into a
 generic multi-agent framework, a LangGraph clone, or a web UI before the single
 agent runtime is demonstrably reliable.
 
-## Current Release: 1.3.3
+## Current Release: 1.5.3
+
+The 1.5 line skips the earlier 1.4 read-only subagent idea and moves the main
+story toward long-horizon codebase maintenance. The new target is:
+
+> A codebase-agent runtime should keep long-running coding tasks continuous,
+> controllable, and auditable across runs.
+
+Trace remains the evidence layer, but it is no longer the only product story.
+The 1.5 line adds durable task notes, note-aware context construction, context
+quality evaluation, and then a plan-driven ReAct-style step contract.
+
+### 1.5.x Plan
+
+- 1.5.0: Long-term task notes.
+  - Local Markdown `NoteStore` with `notes_index.json`.
+  - Model-callable `create_note` and `search_notes`.
+  - Note types for blockers, actions, task state, decisions, conclusions, and
+    verified facts.
+  - Trace/replay evidence for note creation and retrieval.
+- 1.5.1: Note-aware context assembly.
+  - Runtime note retrieval and selection.
+  - `relevant_notes` prompt section.
+  - Trace/replay evidence for note injection.
+- 1.5.2: Context-quality evaluation for the GSSC pipeline.
+  - Density, relevance, and completeness scores.
+  - Warnings and suggestions for bad context.
+  - Eval/report metrics for context quality.
+- 1.5.3: Plan-driven ReAct-style step contract.
+  - Structured plan and step state.
+  - Optional thought summary, expected observation, reflection, and plan update
+    fields on model actions.
+  - Plan trace/replay metrics.
+
+### Why 1.4 Is Deferred
+
+The old 1.4 candidate was a read-only reviewer/explorer subagent. That remains a
+possible future feature, but it is less urgent than long-horizon single-agent
+state. The current interview and engineering gap is not "add more agents"; it is
+"make one coding agent maintain task continuity, context quality, and explicit
+plans across longer work."
+
+## Previous Release: 1.3.4
 
 The 1.3 line keeps the 1.0 interview-ready runtime, the 1.1
 prompt-cache-aware context governance, and the 1.2 train/eval boundary. It adds
@@ -144,6 +186,9 @@ evidence:
   verifier outcomes.
 - More robust tool policies for language-specific build systems.
 - Optional packaged releases for local CLI use.
+- Optional note indexing layers such as SQLite / FTS5 can be explored later,
+  but they are not part of the committed 1.6 plan. The current mainline keeps
+  Markdown notes as the durable source of truth.
 
 ## Durable Non-Goals
 

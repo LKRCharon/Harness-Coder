@@ -17,6 +17,64 @@ Phase = Literal["init", "explore", "edit", "verify", "done", "failed"]
 
 
 @dataclass(slots=True)
+class PlanStep:
+    step_id: str
+    title: str
+    status: str = "pending"
+    details: str | None = None
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "title": self.title,
+            "status": self.status,
+            "details": self.details,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> "PlanStep":
+        return cls(
+            step_id=str(record.get("step_id") or ""),
+            title=str(record.get("title") or ""),
+            status=str(record.get("status") or "pending"),
+            details=(
+                str(record["details"]) if record.get("details") is not None else None
+            ),
+        )
+
+
+@dataclass(slots=True)
+class AgentPlan:
+    steps: list[PlanStep] = field(default_factory=list)
+    revision: int = 0
+    last_reflection: str | None = None
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "steps": [step.to_record() for step in self.steps],
+            "revision": self.revision,
+            "last_reflection": self.last_reflection,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> "AgentPlan":
+        steps = [
+            PlanStep.from_record(item)
+            for item in record.get("steps", [])
+            if isinstance(item, dict)
+        ]
+        return cls(
+            steps=steps,
+            revision=int(record.get("revision", 0)),
+            last_reflection=(
+                str(record["last_reflection"])
+                if record.get("last_reflection") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(slots=True)
 class ModelAction:
     """A model decision emitted for one agent-loop step."""
 
@@ -25,6 +83,11 @@ class ModelAction:
     tool_name: str | None = None
     tool_args: dict[str, Any] = field(default_factory=dict)
     content: str | None = None
+    thought_summary: str | None = None
+    current_step_id: str | None = None
+    expected_observation: str | None = None
+    reflection: str | None = None
+    plan_update: dict[str, Any] | None = None
     call_id: str = field(default_factory=lambda: f"call_{uuid4().hex[:12]}")
 
     def to_record(self) -> dict[str, Any]:
@@ -34,6 +97,11 @@ class ModelAction:
             "tool_name": self.tool_name,
             "tool_args": self.tool_args,
             "content": self.content,
+            "thought_summary": self.thought_summary,
+            "current_step_id": self.current_step_id,
+            "expected_observation": self.expected_observation,
+            "reflection": self.reflection,
+            "plan_update": self.plan_update,
             "call_id": self.call_id,
         }
 
@@ -87,6 +155,7 @@ class AgentState:
     budget: dict[str, Any] = field(default_factory=dict)
     memory_blocks: dict[str, MemoryBlock] = field(default_factory=default_memory_blocks)
     session_context: dict[str, Any] | None = None
+    plan: AgentPlan = field(default_factory=AgentPlan)
 
     def __post_init__(self) -> None:
         self.current_open_questions()
@@ -175,6 +244,7 @@ class AgentState:
                 if isinstance(self.session_context, dict)
                 else None
             ),
+            "plan": self.plan.to_record(),
             "modified_files": list(self.modified_files),
             "action_count": len(self.actions),
             "observation_count": len(self.observations),
@@ -211,6 +281,7 @@ class AgentState:
                 if isinstance(self.session_context, dict)
                 else None
             ),
+            "plan": self.plan.to_record(),
         }
 
     @classmethod
@@ -292,6 +363,11 @@ class AgentState:
                 dict(record.get("session_context"))
                 if isinstance(record.get("session_context"), dict)
                 else None
+            ),
+            plan=(
+                AgentPlan.from_record(record.get("plan", {}))
+                if isinstance(record.get("plan"), dict)
+                else AgentPlan()
             ),
         )
         state.refresh_budget()

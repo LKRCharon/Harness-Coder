@@ -15,6 +15,7 @@ from harnesscoder.core.models import (
     ScriptedModel,
 )
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.replay import summarize_trace
 from harnesscoder.core.session import DEFAULT_SESSION_ID, DEFAULT_SESSION_ROOT, SessionStore
 from harnesscoder.model_profiles import (
     ModelProfile,
@@ -105,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="RepoMap prompt injection mode. Defaults to auto.",
     )
     parser.add_argument(
+        "--notes-mode",
+        choices=["none", "auto"],
+        default=os.environ.get("HARNESSCODER_NOTES_MODE", "auto"),
+        help="Durable note retrieval mode. Defaults to auto.",
+    )
+    parser.add_argument(
         "--trace-root",
         default=".harnesscoder/runs",
         help="Directory where run traces are written.",
@@ -172,8 +179,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     cwd = Path(args.cwd).resolve()
 
     if args.replay:
-        from harnesscoder.replay import summarize_trace
-
         import json
 
         summary = summarize_trace(args.replay)
@@ -188,6 +193,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_iterations=args.max_iterations,
             context_mode=args.context_mode,
             repo_map_mode=args.repo_map_mode,
+            notes_mode=args.notes_mode,
         )
         result = runner.resume_from_checkpoint(args.resume)
         print(result.final_answer)
@@ -247,6 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_iterations=args.max_iterations,
                 context_mode=args.context_mode,
                 repo_map_mode=args.repo_map_mode,
+                notes_mode=args.notes_mode,
             )
             report = render_markdown_matrix(matrix)
             if args.eval_report:
@@ -274,6 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=model,
             context_mode=args.context_mode,
             repo_map_mode=args.repo_map_mode,
+            notes_mode=args.notes_mode,
         )
         report = render_markdown_report(results)
         if args.eval_report:
@@ -305,6 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_iterations=args.max_iterations,
                 context_mode=args.context_mode,
                 repo_map_mode=args.repo_map_mode,
+                notes_mode=args.notes_mode,
                 session_id=args.session or DEFAULT_SESSION_ID,
                 session_root=Path(args.session_root),
             ),
@@ -321,6 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_iterations=args.max_iterations,
         context_mode=args.context_mode,
         repo_map_mode=args.repo_map_mode,
+        notes_mode=args.notes_mode,
     )
     session_store = SessionStore(Path(args.session_root), cwd) if args.session else None
     session_context = (
@@ -335,10 +345,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"status: {result.status}")
     print(f"run_id: {result.run_id}")
     print(f"trace: {result.trace_path}")
+    _print_runtime_summary(result.trace_path)
     if args.session:
         print(f"session: {session_store.path_for(args.session)}")
 
     return 0 if result.status == "success" else 1
+
+
+def _print_runtime_summary(trace_path: Path) -> None:
+    summary = summarize_trace(trace_path)
+    metrics = summary.get("metrics", {})
+    notes = int(metrics.get("note_injected_count") or 0)
+    note_created = int(metrics.get("note_created_count") or 0)
+    note_retrieved = int(metrics.get("note_retrieved_count") or 0)
+    quality = metrics.get("average_context_quality_score")
+    low_quality = int(metrics.get("low_quality_context_count") or 0)
+    low_relevance = int(metrics.get("low_relevance_context_count") or 0)
+    low_completeness = int(metrics.get("low_completeness_context_count") or 0)
+    plan_steps = int(metrics.get("plan_step_count") or 0)
+    plan_created = int(metrics.get("plan_created_count") or 0)
+    plan_updated = int(metrics.get("plan_updated_count") or 0)
+    blocked_steps = int(metrics.get("blocked_step_count") or 0)
+    action_with_step_ratio = metrics.get("action_with_step_ratio")
+
+    print(
+        "notes: "
+        f"injected={notes} created={note_created} retrieved={note_retrieved}"
+    )
+    if quality is not None:
+        print(
+            "context_quality: "
+            f"score={quality} low_quality={low_quality} "
+            f"low_relevance={low_relevance} low_completeness={low_completeness}"
+        )
+    else:
+        print("context_quality: score=-")
+    if action_with_step_ratio is None:
+        plan_ratio = "-"
+    else:
+        plan_ratio = str(action_with_step_ratio)
+    print(
+        "plan: "
+        f"created={plan_created} updated={plan_updated} "
+        f"steps={plan_steps} blocked={blocked_steps} action_with_step_ratio={plan_ratio}"
+    )
 
 
 def build_model(args: argparse.Namespace) -> ModelAdapter:

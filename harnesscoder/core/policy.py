@@ -5,6 +5,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from harnesscoder.core.notes import (
+    MAX_NOTE_CONTENT_CHARS,
+    MAX_NOTE_QUERY_CHARS,
+    MAX_NOTE_SEARCH_LIMIT,
+    MAX_NOTE_TAG_CHARS,
+    MAX_NOTE_TAGS,
+    MAX_NOTE_TITLE_CHARS,
+    NOTE_TYPES,
+)
 from harnesscoder.core.tools import SENSITIVE_FILE_NAMES, SENSITIVE_FILE_SUFFIXES
 
 
@@ -86,6 +95,12 @@ class ToolPolicy:
 
         if tool_name == "run_command":
             return self._check_run_command(tool_args, cwd)
+
+        if tool_name == "create_note":
+            return self._check_create_note(tool_args)
+
+        if tool_name == "search_notes":
+            return self._check_search_notes(tool_args)
 
         return PolicyDecision(False, f"unknown tool: {tool_name}")
 
@@ -231,6 +246,59 @@ class ToolPolicy:
             return path_decision
 
         return PolicyDecision(True, "local test command allowed")
+
+    def _check_create_note(self, tool_args: dict[str, Any]) -> PolicyDecision:
+        note_type = tool_args.get("note_type", "general")
+        if not isinstance(note_type, str) or note_type not in NOTE_TYPES:
+            return PolicyDecision(False, "note_type is not supported")
+
+        title = tool_args.get("title")
+        if not isinstance(title, str) or not title.strip():
+            return PolicyDecision(False, "title must be a non-empty string")
+        if len(" ".join(title.split())) > MAX_NOTE_TITLE_CHARS:
+            return PolicyDecision(False, "title is too long")
+
+        content = tool_args.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return PolicyDecision(False, "content must be a non-empty string")
+        if len(content.strip()) > MAX_NOTE_CONTENT_CHARS:
+            return PolicyDecision(False, "content is too long")
+
+        tags = tool_args.get("tags", [])
+        if tags is None:
+            tags = []
+        if not isinstance(tags, list):
+            return PolicyDecision(False, "tags must be a list of strings")
+        if len(tags) > MAX_NOTE_TAGS:
+            return PolicyDecision(False, "too many tags")
+        for tag in tags:
+            if not isinstance(tag, str):
+                return PolicyDecision(False, "tags must be a list of strings")
+            if len(tag.strip()) > MAX_NOTE_TAG_CHARS:
+                return PolicyDecision(False, "tag is too long")
+
+        return PolicyDecision(True, "note creation is allowed")
+
+    def _check_search_notes(self, tool_args: dict[str, Any]) -> PolicyDecision:
+        query = tool_args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return PolicyDecision(False, "query must be a non-empty string")
+        if len(" ".join(query.split())) > MAX_NOTE_QUERY_CHARS:
+            return PolicyDecision(False, "query is too long")
+
+        limit = tool_args.get("limit", 5)
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            return PolicyDecision(False, "limit must be a positive integer")
+        if limit > MAX_NOTE_SEARCH_LIMIT:
+            return PolicyDecision(False, "limit is too high")
+
+        note_type = tool_args.get("note_type")
+        if note_type is not None and (
+            not isinstance(note_type, str) or note_type not in NOTE_TYPES
+        ):
+            return PolicyDecision(False, "note_type is not supported")
+
+        return PolicyDecision(True, "note search is read-only and allowed")
 
     def _check_test_command_shape(self, parts: list[str]) -> PolicyDecision:
         head = Path(parts[0]).name
