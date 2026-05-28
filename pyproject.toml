@@ -14,6 +14,13 @@ authors = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+web = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2,<3",
+  "httpx>=0.27,<1",
+]
+
 [project.scripts]
 harnesscoder = "harnesscoder.cli:main"
 
