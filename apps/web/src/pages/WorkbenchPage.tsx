@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createRun, fetchRun, fetchRunEvents, fetchRuns, openRunStream } from '../api'
+import { createRun, fetchRun, fetchRunEvents, fetchThread, fetchThreads, openRunStream } from '../api'
+import { Composer } from '../components/Composer'
+import { ThreadRow } from '../components/ThreadRow'
+import { Button } from '../components/ui/Button'
+import { Chip } from '../components/ui/Chip'
+import { cx } from '../components/ui/cx'
 import type {
   LaunchRunRequest,
   RunDetail,
   RunEvent,
   RunStateEvent,
-  RunSummary,
+  ThreadDetail,
+  ThreadSummary,
 } from '../types'
 import { useNavigate, useParams } from 'react-router-dom'
 
@@ -52,12 +58,6 @@ function formatRelative(value: string | null | undefined): string {
   return `${Math.round(deltaSeconds / 86400)}d`
 }
 
-function formatDuration(value: number | null | undefined): string {
-  if (typeof value !== 'number') return '—'
-  if (value < 1) return `${Math.round(value * 1000)} ms`
-  return `${value.toFixed(value >= 10 ? 0 : 1)} s`
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
 }
@@ -67,6 +67,21 @@ function excerpt(value: unknown, max = 160): string | undefined {
   const compact = value.replace(/\s+/g, ' ').trim()
   if (!compact) return undefined
   return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact
+}
+
+function normalizeTitle(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const compact = value
+    .replace(/\uFFFD/g, '')
+    .split('')
+    .map((char) => {
+      const codePoint = char.codePointAt(0) ?? 0
+      return codePoint < 32 || codePoint === 127 ? ' ' : char
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return compact.length > 0 ? compact : fallback
 }
 
 function previewPayload(payload: Record<string, unknown>): string {
@@ -245,9 +260,10 @@ function collectChangedFiles(detail: RunDetail | null, events: RunEvent[]): stri
 export function WorkbenchPage() {
   const navigate = useNavigate()
   const { runId = '' } = useParams()
-  const [runs, setRuns] = useState<RunSummary[]>([])
-  const [runsLoading, setRunsLoading] = useState(true)
-  const [runsError, setRunsError] = useState<string | null>(null)
+  const [threads, setThreads] = useState<ThreadSummary[]>([])
+  const [threadsLoading, setThreadsLoading] = useState(true)
+  const [threadsError, setThreadsError] = useState<string | null>(null)
+  const [threadDetail, setThreadDetail] = useState<ThreadDetail | null>(null)
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [events, setEvents] = useState<RunEvent[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
@@ -255,6 +271,7 @@ export function WorkbenchPage() {
   const [streamState, setStreamState] = useState<'idle' | 'connecting' | 'live' | 'closed'>('idle')
   const [runState, setRunState] = useState<RunStateEvent | null>(null)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('overview')
+  const [inspectorOpen, setInspectorOpen] = useState(true)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
@@ -270,25 +287,26 @@ export function WorkbenchPage() {
     notes_mode: 'auto',
   })
   const lastEventIndexRef = useRef(0)
+  const currentSessionId = detail?.summary.session_id ?? runState?.session_id ?? null
 
   useEffect(() => {
     let cancelled = false
-    const loadRuns = async () => {
+    const loadThreads = async () => {
       try {
-        const nextRuns = await fetchRuns()
+        const nextThreads = await fetchThreads()
         if (cancelled) return
-        setRuns(nextRuns)
-        setRunsError(null)
+        setThreads(nextThreads)
+        setThreadsError(null)
       } catch (err) {
         if (cancelled) return
-        setRunsError(err instanceof Error ? err.message : 'Failed to load threads.')
+        setThreadsError(err instanceof Error ? err.message : 'Failed to load threads.')
       } finally {
-        if (!cancelled) setRunsLoading(false)
+        if (!cancelled) setThreadsLoading(false)
       }
     }
-    void loadRuns()
+    void loadThreads()
     const timer = window.setInterval(() => {
-      void loadRuns()
+      void loadThreads()
     }, 3000)
     return () => {
       cancelled = true
@@ -297,9 +315,12 @@ export function WorkbenchPage() {
   }, [])
 
   useEffect(() => {
-    if (runId || runs.length === 0) return
-    navigate(`/workbench/${runs[0].run_id}`, { replace: true })
-  }, [navigate, runId, runs])
+    if (runId || threads.length === 0) return
+    const latestRunId = threads[0].latest_run_id
+    if (latestRunId) {
+      navigate(`/workbench/${latestRunId}`, { replace: true })
+    }
+  }, [navigate, runId, threads])
 
   useEffect(() => {
     if (!runId) {
@@ -307,6 +328,7 @@ export function WorkbenchPage() {
         setDetail(null)
         setEvents([])
         setRunState(null)
+        setThreadDetail(null)
       })
       lastEventIndexRef.current = 0
       return
@@ -325,6 +347,12 @@ export function WorkbenchPage() {
         if (cancelled) return
         setDetail(nextDetail)
         setEvents(nextEvents)
+        const sessionId = nextDetail.summary.session_id
+        if (typeof sessionId === 'string' && sessionId.length > 0) {
+          void fetchThread(sessionId).then(setThreadDetail).catch(() => undefined)
+        } else {
+          setThreadDetail(null)
+        }
         lastEventIndexRef.current =
           nextEvents.length > 0 ? nextEvents[nextEvents.length - 1].index + 1 : 0
       })
@@ -355,23 +383,11 @@ export function WorkbenchPage() {
       void fetchRun(runId)
         .then((nextDetail) => {
           setDetail(nextDetail)
-          setRuns((current) =>
-            current.map((item) =>
-              item.run_id === nextDetail.run_id
-                ? {
-                    ...item,
-                    status: nextDetail.summary.status,
-                    total_events: nextDetail.summary.total_events,
-                    iterations: nextDetail.summary.iterations,
-                    max_iterations: nextDetail.summary.max_iterations,
-                    duration_seconds: nextDetail.summary.duration_seconds,
-                    task: nextDetail.summary.task,
-                    model: nextDetail.summary.model,
-                    is_active: payload.is_active,
-                  }
-                : item,
-            ),
-          )
+          if (typeof nextDetail.summary.session_id === 'string' && nextDetail.summary.session_id) {
+            void fetchThread(nextDetail.summary.session_id)
+              .then(setThreadDetail)
+              .catch(() => undefined)
+          }
         })
         .catch(() => undefined)
     })
@@ -390,7 +406,7 @@ export function WorkbenchPage() {
     stream.addEventListener('end', () => {
       setStreamState('closed')
       stream.close()
-      void fetchRuns().then(setRuns).catch(() => undefined)
+      void fetchThreads().then(setThreads).catch(() => undefined)
       void fetchRun(runId).then(setDetail).catch(() => undefined)
     })
 
@@ -403,10 +419,14 @@ export function WorkbenchPage() {
     }
   }, [runId])
 
-  const activeThread = useMemo(
-    () => runs.find((item) => item.run_id === runId) ?? null,
-    [runId, runs],
+  const currentThread = useMemo(
+    () => threads.find((item) => item.session_id === currentSessionId) ?? null,
+    [currentSessionId, threads],
   )
+  const activeRun = useMemo(() => {
+    const runs = threadDetail?.runs ?? []
+    return runs.find((item) => item.run_id === runId) ?? null
+  }, [runId, threadDetail])
   const runtimeCards = useMemo(() => buildRuntimeCards(events), [events])
   const changedFiles = useMemo(() => collectChangedFiles(detail, events), [detail, events])
   const planEvents = useMemo(
@@ -422,17 +442,18 @@ export function WorkbenchPage() {
   )
   const stats = useMemo(
     () => ({
-      active: runs.filter((item) => item.is_active).length,
-      attention: runs.filter(
+      active: threads.filter((item) => item.is_active).length,
+      attention: threads.filter(
         (item) => item.status && !item.is_active && item.status !== 'success',
       ).length,
       changedFiles: changedFiles.length,
     }),
-    [changedFiles.length, runs],
+    [changedFiles.length, threads],
   )
-  const effectiveStatus = runState?.status ?? detail?.summary.status ?? activeThread?.status ?? 'idle'
-  const selectedModel = detail?.summary.model ?? activeThread?.model ?? form.model_profile
+  const effectiveStatus = runState?.status ?? detail?.summary.status ?? activeRun?.status ?? 'idle'
+  const selectedModel = detail?.summary.model ?? activeRun?.model ?? form.model_profile
   const finalAnswer = detail?.summary.final_answer
+  const currentTaskTitle = normalizeTitle(currentThread?.task ?? detail?.summary.task, 'New task')
   const timelineLabel =
     excerpt(runtimeCards[runtimeCards.length - 1]?.summary, 72) ??
     (runState?.is_active ? 'Running' : 'Ready')
@@ -446,8 +467,9 @@ export function WorkbenchPage() {
         ...form,
         task: form.task.trim(),
         model_profile: form.model_profile.trim() || 'scripted',
+        session_id: currentSessionId,
       })
-      setRuns((current) => [run, ...current.filter((item) => item.run_id !== run.run_id)])
+      void fetchThreads().then(setThreads).catch(() => undefined)
       setForm((current) => ({ ...current, task: '' }))
       navigate(`/workbench/${run.run_id}`)
     } catch (err) {
@@ -457,8 +479,12 @@ export function WorkbenchPage() {
     }
   }
 
-  function handleSelectThread(nextRunId: string) {
-    navigate(`/workbench/${nextRunId}`)
+  function handleSelectThread(thread: ThreadSummary) {
+    if (thread.latest_run_id) {
+      navigate(`/workbench/${thread.latest_run_id}`)
+      return
+    }
+    navigate('/workbench')
   }
 
   function handleNewThread() {
@@ -466,6 +492,7 @@ export function WorkbenchPage() {
     setDetail(null)
     setEvents([])
     setRunState(null)
+    setThreadDetail(null)
   }
 
   return (
@@ -481,7 +508,7 @@ export function WorkbenchPage() {
         <div className="topbar-right">
           <div className="topbar-pill">
             <span>Threads</span>
-            <strong>{runs.length}</strong>
+            <strong>{threads.length}</strong>
           </div>
           <div className="topbar-pill">
             <span>Live</span>
@@ -505,56 +532,54 @@ export function WorkbenchPage() {
               <span className="section-kicker">Project</span>
               <h1>Threads</h1>
             </div>
-            <button type="button" className="ghost-button" onClick={handleNewThread}>
+            <Button onClick={handleNewThread}>
               New
-            </button>
+            </Button>
           </div>
 
           <div className="sidebar-section sidebar-filter-row">
-            <span className="filter-chip active">All</span>
-            <span className="filter-chip">Live {stats.active}</span>
-            <span className="filter-chip">Files {stats.changedFiles}</span>
+            <Chip active>All</Chip>
+            <Chip>Live {stats.active}</Chip>
+            <Chip>Files {stats.changedFiles}</Chip>
           </div>
 
           <div className="thread-list">
-            {runsLoading ? <div className="empty-panel">Loading threads…</div> : null}
-            {runsError ? <div className="empty-panel error">{runsError}</div> : null}
-            {!runsLoading && !runsError && runs.length === 0 ? (
+            {threadsLoading ? <div className="empty-panel">Loading threads…</div> : null}
+            {threadsError ? <div className="empty-panel error">{threadsError}</div> : null}
+            {!threadsLoading && !threadsError && threads.length === 0 ? (
               <div className="empty-panel">No threads yet.</div>
             ) : null}
-            {runs.map((run) => (
-              <button
-                key={run.run_id}
-                type="button"
-                className={run.run_id === runId ? 'thread-row active' : 'thread-row'}
-                onClick={() => handleSelectThread(run.run_id)}
-              >
-                <div className="thread-row-line">
-                  <span className={`status-dot tone-${statusTone(run.status)}`} />
-                  <strong>{run.task ?? 'Untitled task'}</strong>
-                </div>
-                <div className="thread-row-meta">
-                  <span>{run.model ?? run.provider ?? 'scripted'}</span>
-                  <span>{formatRelative(run.started_at ?? run.submitted_at)}</span>
-                </div>
-                <div className="thread-row-badges">
-                  {run.is_active ? <span className="mini-badge tone-blue">running</span> : null}
-                  {run.failure_category ? (
-                    <span className="mini-badge">{run.failure_category}</span>
-                  ) : null}
-                  {run.total_events ? <span className="mini-badge">{run.total_events} ev</span> : null}
-                </div>
-              </button>
-            ))}
+            {threads.map((thread) => {
+              const badges = [
+                ...(thread.is_active ? [{ label: 'running', tone: 'blue' as const }] : []),
+                ...(thread.status && thread.status !== 'success' && !thread.is_active
+                  ? [{ label: thread.status, tone: 'slate' as const }]
+                  : []),
+                { label: `${thread.run_count} runs`, tone: 'slate' as const },
+              ]
+
+              return (
+                <ThreadRow
+                  key={thread.session_id}
+                  active={thread.session_id === currentSessionId}
+                  title={normalizeTitle(thread.task, 'Untitled thread')}
+                  sessionId={thread.session_id}
+                  updatedLabel={formatRelative(thread.updated_at ?? thread.created_at)}
+                  statusTone={statusTone(thread.status)}
+                  badges={badges}
+                  onClick={() => handleSelectThread(thread)}
+                />
+              )
+            })}
           </div>
         </aside>
 
-        <main className="thread-stage">
+        <main className={cx('thread-stage', inspectorOpen && 'thread-stage-with-inspector')}>
           <section className="thread-header">
             <div>
               <span className="section-kicker">Current thread</span>
               <div className="thread-title-row">
-                <h2>{detail?.summary.task ?? activeThread?.task ?? 'New task'}</h2>
+                <h2>{currentTaskTitle}</h2>
                 <span className={`inline-status tone-${statusTone(effectiveStatus)}`}>
                   {statusLabel(effectiveStatus)}
                 </span>
@@ -566,12 +591,12 @@ export function WorkbenchPage() {
                 <strong>{selectedModel}</strong>
               </div>
               <div>
-                <span>Run</span>
-                <strong>{runId || '—'}</strong>
+                <span>Thread</span>
+                <strong>{currentSessionId ?? 'new'}</strong>
               </div>
               <div>
-                <span>Duration</span>
-                <strong>{formatDuration(detail?.summary.duration_seconds)}</strong>
+                <span>Runs</span>
+                <strong>{threadDetail?.turn_count ?? currentThread?.run_count ?? 0}</strong>
               </div>
             </div>
           </section>
@@ -590,34 +615,37 @@ export function WorkbenchPage() {
               <>
                 <article className="message-block user-block">
                   <span className="message-role">Task</span>
-                  <p>{detail?.summary.task ?? activeThread?.task ?? 'Pending task'}</p>
+                  <p>{currentTaskTitle}</p>
                 </article>
 
                 <article className="message-block agent-block">
                   <div className="agent-block-head">
                     <span className="message-role">Runtime</span>
-                    <span className={`mini-badge tone-${statusTone(effectiveStatus)}`}>
+                    <Chip tone={statusTone(effectiveStatus)}>
                       {streamState}
-                    </span>
+                    </Chip>
                   </div>
-                  <div className="runtime-status-line">
-                    <div>
+                  <div className="runtime-overview">
+                    <div className="runtime-overview-main">
                       <span>Status</span>
                       <strong>{statusLabel(effectiveStatus)}</strong>
+                      <p>{timelineLabel}</p>
                     </div>
-                    <div>
-                      <span>Timeline</span>
-                      <strong>{timelineLabel}</strong>
-                    </div>
-                    <div>
-                      <span>Iterations</span>
-                      <strong>
-                        {detail?.summary.iterations ?? 0}/{detail?.summary.max_iterations ?? 0}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Events</span>
-                      <strong>{detail?.summary.total_events ?? 0}</strong>
+                    <div className="runtime-meta-strip">
+                      <div>
+                        <span>Iterations</span>
+                        <strong>
+                          {detail?.summary.iterations ?? 0}/{detail?.summary.max_iterations ?? 0}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Events</span>
+                        <strong>{detail?.summary.total_events ?? 0}</strong>
+                      </div>
+                      <div>
+                        <span>Thread</span>
+                        <strong>{currentSessionId ?? 'new'}</strong>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -627,9 +655,9 @@ export function WorkbenchPage() {
                     <div className="empty-panel small">No grouped runtime events yet.</div>
                   ) : (
                     runtimeCards.map((card) => (
-                      <article key={card.id} className="runtime-card">
+                      <article key={card.id} className={`runtime-card tone-${card.tone}`}>
                         <div className="runtime-card-head">
-                          <span className={`mini-badge tone-${card.tone}`}>{card.label}</span>
+                          <Chip tone={card.tone}>{card.label}</Chip>
                           {typeof card.eventIndex === 'number' ? <span>#{card.eventIndex}</span> : null}
                         </div>
                         <strong>{card.summary}</strong>
@@ -649,133 +677,62 @@ export function WorkbenchPage() {
             ) : null}
           </section>
 
-          <section className="composer-shell">
-            <form className="composer-form" onSubmit={handleLaunch}>
-              <textarea
-                value={form.task}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, task: event.target.value }))
-                }
-                rows={3}
-                placeholder="让 HarnessCoder 检查、修改、测试或解释这个 repo…"
-                required
-              />
-              <div className="composer-controls">
-                <div className="control-group">
-                  <label>
-                    <span>Mode</span>
-                    <select value={mode} onChange={(event) => setMode(event.target.value as 'local' | 'worktree')}>
-                      <option value="local">Local</option>
-                      <option value="worktree">Worktree</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Model</span>
-                    <input
-                      value={form.model_profile}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, model_profile: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Permission</span>
-                    <select
-                      value={permission}
-                      onChange={(event) =>
-                        setPermission(
-                          event.target.value as 'read-only' | 'safe-edit' | 'full-access',
-                        )
-                      }
-                    >
-                      <option value="read-only">Read only</option>
-                      <option value="safe-edit">Safe edit</option>
-                      <option value="full-access">Full access</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="composer-actions">
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => setAdvancedOpen((current) => !current)}
-                  >
-                    {advancedOpen ? 'Less' : 'More'}
-                  </button>
-                  <button type="submit" className="primary-button" disabled={launching}>
-                    {launching ? 'Queueing…' : 'Send'}
-                  </button>
-                </div>
-              </div>
-
-              {advancedOpen ? (
-                <div className="advanced-controls">
-                  <label>
-                    <span>Max iterations</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={128}
-                      value={form.max_iterations}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          max_iterations: Number(event.target.value) || 1,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Notes</span>
-                    <select
-                      value={form.notes_mode}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          notes_mode: event.target.value as 'none' | 'auto',
-                        }))
-                      }
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="none">None</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Context</span>
-                    <select
-                      value={contextSource}
-                      onChange={(event) =>
-                        setContextSource(event.target.value as 'repo' | 'memory')
-                      }
-                    >
-                      <option value="repo">Repo</option>
-                      <option value="memory">Memory</option>
-                    </select>
-                  </label>
-                </div>
-              ) : null}
-
-              {launchError ? <div className="composer-error">{launchError}</div> : null}
-            </form>
-          </section>
+          <Composer
+            task={form.task}
+            modelProfile={form.model_profile}
+            maxIterations={form.max_iterations}
+            notesMode={form.notes_mode}
+            mode={mode}
+            permission={permission}
+            contextSource={contextSource}
+            advancedOpen={advancedOpen}
+            launching={launching}
+            launchError={launchError}
+            onSubmit={handleLaunch}
+            onTaskChange={(value) => setForm((current) => ({ ...current, task: value }))}
+            onModeChange={setMode}
+            onModelProfileChange={(value) =>
+              setForm((current) => ({ ...current, model_profile: value }))
+            }
+            onPermissionChange={setPermission}
+            onToggleAdvanced={() => setAdvancedOpen((current) => !current)}
+            onMaxIterationsChange={(value) =>
+              setForm((current) => ({ ...current, max_iterations: value }))
+            }
+            onNotesModeChange={(value) =>
+              setForm((current) => ({ ...current, notes_mode: value }))
+            }
+            onContextSourceChange={setContextSource}
+          />
         </main>
 
-        <aside className="inspector">
-          <div className="inspector-tabs">
-            {(['overview', 'plan', 'files', 'trace', 'context'] as InspectorTab[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={inspectorTab === tab ? 'inspector-tab active' : 'inspector-tab'}
-                onClick={() => setInspectorTab(tab)}
-              >
-                {tab}
-              </button>
-            ))}
+        <aside className={cx('inspector', inspectorOpen ? 'open' : 'collapsed')}>
+          <div className="inspector-topline">
+            {inspectorOpen ? (
+              <div className="inspector-tabs">
+                {(['overview', 'plan', 'files', 'trace', 'context'] as InspectorTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={inspectorTab === tab ? 'inspector-tab active' : 'inspector-tab'}
+                    onClick={() => setInspectorTab(tab)}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="inspector-toggle"
+              aria-label={inspectorOpen ? 'Collapse inspector' : 'Expand inspector'}
+              onClick={() => setInspectorOpen((current) => !current)}
+            >
+              {inspectorOpen ? '›' : '‹'}
+            </button>
           </div>
 
-          <div className="inspector-body">
+          <div className={cx('inspector-body', !inspectorOpen && 'hidden')}>
             {inspectorTab === 'overview' ? (
               <div className="inspector-stack">
                 <section className="inspector-panel">
@@ -783,7 +740,7 @@ export function WorkbenchPage() {
                   <div className="metric-list">
                     <div><span>Status</span><strong>{statusLabel(effectiveStatus)}</strong></div>
                     <div><span>Model</span><strong>{selectedModel}</strong></div>
-                    <div><span>Started</span><strong>{formatDateTime(activeThread?.started_at)}</strong></div>
+                    <div><span>Thread</span><strong>{currentSessionId ?? '—'}</strong></div>
                     <div><span>Events</span><strong>{detail?.summary.total_events ?? 0}</strong></div>
                   </div>
                 </section>
@@ -805,7 +762,7 @@ export function WorkbenchPage() {
                 {planEvents.map((event) => (
                   <section key={event.index} className="inspector-panel">
                     <div className="runtime-card-head">
-                      <span className="mini-badge tone-blue">{event.type}</span>
+                      <Chip tone="blue">{event.type}</Chip>
                       <span>#{event.index}</span>
                     </div>
                     <strong>{previewPayload(event.payload)}</strong>
@@ -819,7 +776,7 @@ export function WorkbenchPage() {
                 {changedFiles.length === 0 ? <div className="empty-panel small">No changed files yet.</div> : null}
                 {changedFiles.map((file) => (
                   <section key={file} className="inspector-panel file-row">
-                    <span className="mini-badge tone-green">file</span>
+                    <Chip tone="green">file</Chip>
                     <strong>{file}</strong>
                   </section>
                 ))}
@@ -831,7 +788,7 @@ export function WorkbenchPage() {
                 {events.map((event) => (
                   <button key={event.index} type="button" className="trace-row">
                     <div className="runtime-card-head">
-                      <span className={`mini-badge tone-${statusTone(event.type)}`}>{event.type}</span>
+                      <Chip tone={statusTone(event.type)}>{event.type}</Chip>
                       <span>#{event.index}</span>
                     </div>
                     <strong>{previewPayload(event.payload)}</strong>
@@ -876,7 +833,7 @@ export function WorkbenchPage() {
                 latestContextSignal.payload.warnings.length > 0 ? (
                   latestContextSignal.payload.warnings.map((warning) => (
                     <section key={warning} className="inspector-panel">
-                      <span className="mini-badge tone-amber">warning</span>
+                      <Chip tone="amber">warning</Chip>
                       <strong>{warning}</strong>
                     </section>
                   ))

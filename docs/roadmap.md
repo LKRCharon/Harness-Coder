@@ -19,7 +19,7 @@ story toward long-horizon codebase maintenance. The new target is:
 
 Trace remains the evidence layer, but it is no longer the only product story.
 The 1.5 line adds durable task notes, note-aware context construction, context
-quality evaluation, and then a plan-driven ReAct-style step contract.
+quality evaluation, and then a plan-aware structured tool-use step contract.
 
 ### 1.5.x Plan
 
@@ -37,11 +37,37 @@ quality evaluation, and then a plan-driven ReAct-style step contract.
   - Density, relevance, and completeness scores.
   - Warnings and suggestions for bad context.
   - Eval/report metrics for context quality.
-- 1.5.3: Plan-driven ReAct-style step contract.
+- 1.5.3: Plan-aware structured tool-use step contract.
   - Structured plan and step state.
   - Optional thought summary, expected observation, reflection, and plan update
     fields on model actions.
   - Plan trace/replay metrics.
+
+### Tool-Use Direction
+
+The project should stop treating classic 2022-style ReAct prompting as the
+implementation target.
+
+ReAct remains useful as historical background for understanding why
+reasoning-action-observation loops matter. But HarnessCoder's runtime story is
+now closer to the production coding-agent pattern used by modern tool-calling
+systems:
+
+- assemble bounded context
+- call the model with a structured action contract
+- policy-gate tool execution
+- append tool results to state and trace
+- continue the loop until the model ends the turn
+
+In other words, HarnessCoder is moving from "paper-style ReAct framing" to
+"structured tool-use runtime" framing.
+
+That means:
+
+- no fragile `Thought: Action: Observation:` text parsing
+- no requirement that reasoning be exposed as free-form visible chain-of-thought
+- yes to structured model actions, explicit end-of-turn control, policy-gated
+  tool execution, trace evidence, context governance, and replayable evaluation
 
 ### Why 1.4 Is Deferred
 
@@ -189,6 +215,22 @@ evidence:
 - Optional note indexing layers such as SQLite / FTS5 can be explored later,
   but they are not part of the committed 1.6 plan. The current mainline keeps
   Markdown notes as the durable source of truth.
+
+## Correcting The Earlier Detour
+
+Some earlier planning language leaned too hard on ReAct terminology. That was a
+useful learning step, but it is not the right mainline for HarnessCoder.
+
+The adjustment is:
+
+- keep ReAct as a conceptual ancestor, not as the runtime contract
+- keep plan / reflection / observation as structured runtime concepts
+- describe the agent loop as a tool-use loop, not as a prompt-format demo
+- focus roadmap work on reliability surfaces: trace, policy, context, notes,
+  replay, eval, and run control
+
+This keeps the project aligned with its actual engineering target: a local
+coding-agent runtime whose behavior can be inspected, measured, and compared.
 
 ## Durable Non-Goals
 

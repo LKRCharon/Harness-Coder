@@ -69,6 +69,7 @@ def summarize_trace(path: str | Path) -> JsonRecord:
 
     return {
         "run_id": _first_run_id(records, state),
+        "session_id": _session_id_from_trace(records, state),
         "status": status,
         "task": state.get("task") or run_started.get("task"),
         "cwd": state.get("cwd") or run_started.get("cwd"),
@@ -137,6 +138,17 @@ def _resolve_trace_path(path: str | Path) -> Path:
     if trace_path.is_dir():
         trace_path = trace_path / "trace.jsonl"
     return trace_path
+
+
+def _session_id_from_trace(records: list[JsonRecord], state: JsonRecord) -> str | None:
+    session_context = state.get("session_context")
+    if isinstance(session_context, dict):
+        value = session_context.get("session_id")
+        if isinstance(value, str) and value:
+            return value
+    run_started = _last_event(records, "run_started") or {}
+    value = run_started.get("session_id")
+    return value if isinstance(value, str) and value else None
 
 
 def _event_type(record: JsonRecord) -> str:

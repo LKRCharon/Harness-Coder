@@ -193,6 +193,60 @@ Behavior:
 
 ## Frontend
 
+### Runtime Workbench Direction
+
+Web 0.2 should no longer read like a dashboard or a trace-admin page. The
+target surface is a local runtime workbench:
+
+- left: threads/navigation
+- center: conversation workspace
+- right: inspector
+- bottom: command-style composer
+
+The browser still remains a control + observability surface over the Python
+runtime, but the UI should present that runtime as a readable execution story,
+not a pile of tables or metric cards.
+
+### Visual System Rules
+
+The web surface should follow these rules:
+
+- use low-contrast gray-blue dark surfaces, not pure black
+- do not use terminal-style full-black dark mode
+- use a Codex-like layered workbench, not a flat monitor wall
+- use semantic color roles, not decorative accent color
+- let surface hierarchy, spacing, and density carry structure
+- keep borders minimal; borders are hints, not the skeleton
+- keep the center workspace and bottom composer as the visual priority
+
+Spatial expression:
+
+- left sidebar behaves like a quiet app shell
+- center workspace is the primary execution surface
+- right inspector and bottom composer should read as operating surfaces floating
+  above the workspace
+- layering should be communicated through surface brightness, shadow, radius,
+  and spacing before border
+
+Color roles:
+
+- blue: active, focus, running, links
+- green: success, connected, completed
+- amber: attention, approval, warning, pending
+- red: failed, error, destructive states
+- purple: context, memory, notes when those concepts are shown
+- cyan: trace, tool, stream when a secondary accent is helpful
+
+Surface hierarchy:
+
+- `L0`: app background
+- `L1`: navigation and inspector
+- `L2`: workspace background
+- `L3`: content blocks such as messages, runtime summaries, and timeline items
+- `L4`: composer, current selection, and focused states
+
+The UI should make the current focus legible even with borders turned down.
+
 ### Runs Page
 
 Add a compact launcher panel above the runs table:
@@ -213,6 +267,35 @@ Keep the current trace-viewer layout, but make it live:
 - append new matching events
 - refresh summary while events arrive
 - show connection/run-state badges
+
+### Runtime Workbench Expression
+
+As the runs page evolves into `/workbench`, it should follow this expression:
+
+- user task appears as a message bubble, not a field card
+- runtime summary appears as an agent response, not a KPI grid
+- tool activity appears as timeline events, not thick stacked cards
+- composer appears as a command bar, not a settings form
+
+The center column should answer this reading flow:
+
+1. what the user asked
+2. what the runtime is currently doing
+3. which actions it took
+4. whether approval or attention is needed
+5. what result it produced
+
+The right column should absorb detailed properties, traces, files, and context
+metadata so that the center column stays readable.
+
+The workbench should feel layered rather than boxed:
+
+- the sidebar stays quiet
+- the workspace stays broad and stable
+- the inspector and composer feel slightly elevated from the workspace
+- hierarchy should come from surfaces and spacing, not thick dividers
+
+For a more detailed visual system, see `docs/workbench-design-language.md`.
 
 ## Verification
 

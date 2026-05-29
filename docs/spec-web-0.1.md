@@ -99,7 +99,7 @@ Responsibilities:
 - render run list
 - render run detail
 - filter and inspect trace events
-- show structured runtime evidence
+- show structured tool-use and runtime evidence
 
 Recommended stack:
 
@@ -148,7 +148,7 @@ Layout:
 
 - left: event timeline
 - center: selected event detail
-- right: run summary / context / notes / plan facts
+- right: run summary / context / notes / plan / tool-use facts
 
 Panels:
 
@@ -157,6 +157,7 @@ Panels:
 - timeline list
 - selected event JSON/detail card
 - summary sidebar
+- tool-use-oriented event summaries
 
 ## Backend API
 

@@ -12,7 +12,8 @@ When asked "what problems did you run into while building this project?", answer
 from the pattern below:
 
 1. Start from the system goal: HarnessCoder is an event-sourced coding-agent
-   runtime, not only a CLI wrapper around an LLM.
+   runtime built around a structured tool-use loop, not only a CLI wrapper
+   around an LLM.
 2. Pick one concrete issue from this document.
 3. Explain the root cause, the tradeoff, and the fix.
 4. Connect it back to agent reliability: reproducible traces, policy gating,
@@ -20,7 +21,7 @@ from the pattern below:
 
 ## Project Direction Decisions
 
-### 1. Dynamic Agent Loop Instead Of DAG Runtime
+### 1. Dynamic Tool-Use Loop Instead Of DAG Runtime
 
 Problem:
 Coding-agent tasks are not naturally fixed workflows. The next useful action
@@ -28,7 +29,7 @@ depends on repository state, command output, read results, policy decisions,
 failures, and the model's evolving plan.
 
 Decision:
-The core runtime is a dynamic loop:
+The core runtime is a dynamic tool-use loop:
 
 ```text
 state -> model action -> policy decision -> tool result -> state update
@@ -43,8 +44,14 @@ setup repo -> run agent -> run tests -> collect trace -> score -> report
 
 Interview angle:
 This avoids forcing coding behavior into a static DAG too early. The harness
-keeps the agent loop flexible while making every step auditable through JSONL
+keeps the tool-use loop flexible while making every step auditable through JSONL
 events.
+
+Important clarification:
+This is not the same thing as reproducing classic ReAct prompting. HC borrowed
+the high-level idea that action should depend on current evidence, but the
+implementation target is a structured tool-use runtime with JSON actions,
+policy-gated tools, trace, replay, and eval.
 
 ### 2. ScriptedModel Before Real LLM
 
@@ -464,8 +471,8 @@ Interview angle:
 At this point the project was no longer only a fake runtime. The real loop was:
 
 ```text
-real model -> model_action JSON -> policy gate -> local tool
--> observation -> next model_action -> trace
+real model -> structured model_action JSON -> policy gate -> local tool
+-> tool result -> next model_action -> trace
 ```
 
 ## Reference Project Analysis

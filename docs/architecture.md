@@ -1,7 +1,8 @@
 # HarnessCoder Architecture
 
-HarnessCoder is a trace-backed coding agent harness. It keeps the agent loop
-simple and dynamic while making every decision replayable and measurable.
+HarnessCoder is a trace-backed coding-agent runtime and eval harness. It keeps
+the tool-use loop simple and dynamic while making every decision replayable and
+measurable.
 
 ## Core Loop
 
@@ -14,7 +15,7 @@ flowchart TD
     Model --> Action["ModelAction JSON"]
     Action --> Policy["ToolPolicy"]
     Policy -->|allowed| Tools["ToolRegistry"]
-    Policy -->|denied| Observation["ToolObservation"]
+    Policy -->|denied| Observation["ToolObservation / denied result"]
     Tools --> Observation
     Observation --> State["AgentState"]
     State --> Trace["JSONL TraceWriter"]
@@ -22,6 +23,23 @@ flowchart TD
     Trace --> Eval["Eval report / matrix"]
     State --> Runner
 ```
+
+The important architectural point is that HarnessCoder is not implementing a
+prompt-formatted `Thought -> Action -> Observation` demo. It is implementing a
+structured tool-use runtime:
+
+```text
+assemble context
+-> call model
+-> parse structured action
+-> policy-gate tool execution
+-> append tool result to state and trace
+-> continue until finish
+```
+
+Short planning and reflection can still appear through structured fields such as
+`current_step_id`, `plan_update`, or `reflection`, but the runtime contract is
+tool-use-first, not ReAct-text-first.
 
 ## Runtime Control Plane
 
@@ -61,8 +79,8 @@ decision, but the decision belongs to runtime control.
 ## Runtime Pieces
 
 `AgentRunner` owns the loop. Each iteration assembles prompt context, asks the
-model for one JSON action, checks policy, executes or denies a tool call, updates
-state, writes a trace event, and saves a checkpoint.
+model for one structured JSON action, checks policy, executes or denies a tool
+call, updates state, writes a trace event, and saves a checkpoint.
 
 `ModelAdapter` is deliberately small. `scripted` and `hc-bench-oracle` are local
 control arms; `openai-codex` uses a Responses-style endpoint; `openai-chat` uses
@@ -167,7 +185,7 @@ use, time to first edit, search-to-edit steps, and failure category.
 ```mermaid
 flowchart LR
     Cases["eval/*.json"] --> Fixture["copy fixture repo"]
-    Fixture --> Agent["run agent loop"]
+    Fixture --> Agent["run tool-use runtime"]
     Agent --> Tests["run test command"]
     Tests --> Verifier["run trace verifier"]
     Verifier --> Replay["summarize trace"]

@@ -2,38 +2,38 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-HarnessCoder is a local coding agent harness for real repository tasks. The 1.0
-story is deliberately narrow:
+HarnessCoder is a local coding-agent runtime and eval harness for real
+repository tasks. The 1.0 story is deliberately narrow:
 
-- event-sourced agent loop
+- event-sourced structured tool-use loop
 - policy-gated tools
 - trace/replay/eval
 - context governance: memory, compression, and RepoMap
 
 It is not a fork of CoreCoder, not a smaller LangGraph clone, and not a web UI.
-The first goal is a controllable runtime that can run an agent loop, gate tool
-execution with policy, and write every important decision into a replayable
-JSONL trace.
+The first goal is a controllable runtime that can run a structured tool-use
+loop, gate tool execution with policy, and write every important decision into
+a replayable JSONL trace.
 
-The core loop is dynamic:
+The core loop is dynamic and tool-use driven:
 
 ```text
-state -> model decides action -> policy checks -> tool executes
-      -> observation appended -> state updated -> model decides again
+state -> model proposes action -> policy checks -> tool executes
+      -> tool result appended -> state updated -> model proposes again
 ```
 
 That shape matters because coding tasks are rarely a fixed DAG. The useful next
-step depends on the current repo, tool observations, failures, test output, and
-the model's evolving plan. A DAG or LangGraph-style workflow can be useful for
-the eval pipeline around the agent, but the agent itself should remain a
-policy-gated loop.
+step depends on the current repo, tool results, failures, test output, and the
+model's evolving plan. A DAG or LangGraph-style workflow can be useful for the
+eval pipeline around the agent, but the runtime itself should remain a
+policy-gated tool-use loop.
 
 ## What It Provides
 
 HarnessCoder is infrastructure for running and studying coding-agent behavior,
 not a claim that one scaffold is universally strong. It provides:
 
-- A dynamic model-decision loop with policy-gated local tools:
+- A dynamic structured tool-use loop with policy-gated local tools:
   `read_file`, `search_code`, `repo_map`, `write_file`, `edit_file`,
   `run_tests`, and `run_command`.
 - JSONL traces under `.harnesscoder/runs/<run_id>/trace.jsonl`, with
@@ -75,9 +75,9 @@ project mentions, read `README.md`, list files, and then produce a final answer.
 
 ## Design Principles
 
-1. Dynamic agent loop, fixed eval wrapper.
-   Coding tasks require adaptive model decisions, while evaluation should remain
-   reproducible.
+1. Dynamic tool-use runtime, fixed eval wrapper.
+   Coding tasks require adaptive model decisions and tool use, while evaluation
+   should remain reproducible.
 2. Tool calls are proposed by the model, not trusted by the runtime.
    Every tool call passes through a policy gate before execution.
 3. Trace first.
@@ -87,8 +87,8 @@ project mentions, read `README.md`, list files, and then produce a final answer.
    Prompt packing, memory, RepoMap, and session context should be measurable and
    ablatable.
 5. Benchmarks are diagnostic tools, not marketing claims.
-   Local suites are used to compare scaffolds, policies, and context strategies
-   under controlled conditions.
+   Local suites are used to compare runtime scaffolds, policies, and context
+   strategies under controlled conditions.
 
 ## Evidence Snapshot
 

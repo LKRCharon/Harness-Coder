@@ -1,4 +1,11 @@
-import type { LaunchRunRequest, RunDetail, RunEvent, RunSummary } from './types'
+import type {
+  LaunchRunRequest,
+  RunDetail,
+  RunEvent,
+  RunSummary,
+  ThreadDetail,
+  ThreadSummary,
+} from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -27,6 +34,16 @@ async function sendJson<T>(path: string, init: RequestInit): Promise<T> {
 export async function fetchRuns(): Promise<RunSummary[]> {
   const payload = await getJson<{ runs: RunSummary[] }>('/runs')
   return payload.runs
+}
+
+export async function fetchThreads(): Promise<ThreadSummary[]> {
+  const payload = await getJson<{ threads: ThreadSummary[] }>('/threads')
+  return payload.threads
+}
+
+export async function fetchThread(sessionId: string): Promise<ThreadDetail> {
+  const payload = await getJson<{ thread: ThreadDetail }>(`/threads/${sessionId}`)
+  return payload.thread
 }
 
 export async function fetchRun(runId: string): Promise<RunDetail> {

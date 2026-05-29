@@ -19,10 +19,12 @@ from pydantic import BaseModel, Field
 from harnesscoder.cli import resolve_model_profile
 from harnesscoder.core.models import ScriptedModel
 from harnesscoder.core.runner import AgentRunner
+from harnesscoder.core.session import DEFAULT_SESSION_ROOT, SessionStore, normalize_session_id
 from harnesscoder.replay import load_trace, summarize_trace
 
 
 DEFAULT_TRACE_ROOT = Path(".harnesscoder/runs")
+DEFAULT_SESSION_ROOT_WEB = DEFAULT_SESSION_ROOT
 WEB_DEFAULT_CONTEXT_MODE = "pack"
 WEB_DEFAULT_REPO_MAP_MODE = "auto"
 
@@ -32,11 +34,13 @@ class LaunchRunRequest(BaseModel):
     model_profile: str = Field(default="scripted", min_length=1)
     max_iterations: int = Field(default=8, ge=1, le=128)
     notes_mode: Literal["none", "auto"] = "auto"
+    session_id: str | None = None
 
 
 @dataclass(slots=True)
 class ActiveRun:
     run_id: str
+    session_id: str
     task: str
     model_profile: str
     max_iterations: int
@@ -56,6 +60,7 @@ class ActiveRun:
 def create_app(
     trace_root: Path | None = None,
     workspace_root: Path | None = None,
+    session_root: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="HarnessCoder Web API", version="0.2.0")
     app.add_middleware(
@@ -68,8 +73,10 @@ def create_app(
 
     resolved_workspace_root = (workspace_root or Path(".")).resolve()
     resolved_trace_root = _resolve_trace_root(resolved_workspace_root, trace_root)
+    resolved_session_root = _resolve_session_root(resolved_workspace_root, session_root)
     app.state.workspace_root = resolved_workspace_root
     app.state.trace_root = resolved_trace_root
+    app.state.session_store = SessionStore(resolved_session_root, resolved_workspace_root)
     app.state.active_runs = {}
     app.state.active_runs_lock = threading.Lock()
 
@@ -80,6 +87,18 @@ def create_app(
     @app.get("/api/runs")
     def list_runs() -> dict[str, list[dict[str, Any]]]:
         return {"runs": _list_run_cards(app)}
+
+    @app.get("/api/threads")
+    def list_threads() -> dict[str, list[dict[str, Any]]]:
+        return {"threads": _list_thread_cards(app)}
+
+    @app.get("/api/threads/{session_id}")
+    def get_thread(session_id: str) -> dict[str, Any]:
+        normalized_session_id = normalize_session_id(session_id)
+        thread = _thread_detail(app, normalized_session_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail=f"thread not found: {normalized_session_id}")
+        return {"thread": thread}
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
@@ -105,8 +124,10 @@ def create_app(
     def create_run(request: LaunchRunRequest) -> dict[str, Any]:
         run_id = _new_run_id()
         trace_path = _trace_path_for_run(resolved_trace_root, run_id)
+        session_id = normalize_session_id(request.session_id) if request.session_id else f"thread_{uuid4().hex[:10]}"
         active_run = ActiveRun(
             run_id=run_id,
+            session_id=session_id,
             task=request.task.strip(),
             model_profile=request.model_profile.strip(),
             max_iterations=request.max_iterations,
@@ -227,6 +248,14 @@ def _resolve_trace_root(workspace_root: Path, trace_root: Path | None) -> Path:
     return (workspace_root / trace_root).resolve()
 
 
+def _resolve_session_root(workspace_root: Path, session_root: Path | None) -> Path:
+    if session_root is None:
+        return (workspace_root / DEFAULT_SESSION_ROOT_WEB).resolve()
+    if session_root.is_absolute():
+        return session_root.resolve()
+    return (workspace_root / session_root).resolve()
+
+
 def _list_run_summaries(trace_root: Path) -> list[dict[str, Any]]:
     if not trace_root.is_dir():
         return []
@@ -275,6 +304,7 @@ def _run_card(
         status = _display_status(summary.get("status"), active_run)
     return {
         "run_id": run_id,
+        "session_id": summary.get("session_id") or (active_run.session_id if active_run else None),
         "trace_path": str(_trace_path_for_run(trace_root, run_id))
         if isinstance(run_id, str) and run_id
         else None,
@@ -339,6 +369,8 @@ def _new_run_id() -> str:
 def _run_in_background(app: FastAPI, active_run: ActiveRun) -> None:
     try:
         _update_active_run(app, active_run.run_id, status="running", started_at=_now())
+        session_store: SessionStore = app.state.session_store
+        session_context = session_store.build_context(active_run.session_id)
         runner = AgentRunner(
             model=_build_model_for_profile(active_run.model_profile, app.state.workspace_root),
             cwd=app.state.workspace_root,
@@ -348,7 +380,16 @@ def _run_in_background(app: FastAPI, active_run: ActiveRun) -> None:
             repo_map_mode=WEB_DEFAULT_REPO_MAP_MODE,
             notes_mode=active_run.notes_mode,
         )
-        result = runner.run(active_run.task, run_id=active_run.run_id)
+        result = runner.run(
+            active_run.task,
+            run_id=active_run.run_id,
+            session_context=session_context,
+        )
+        session_store.append_run(
+            active_run.session_id,
+            user_message=active_run.task,
+            result=result,
+        )
     except Exception as exc:
         _update_active_run(
             app,
@@ -411,6 +452,7 @@ def _update_active_run(app: FastAPI, run_id: str, **changes: Any) -> None:
 def _active_run_card(active_run: ActiveRun) -> dict[str, Any]:
     return {
         "run_id": active_run.run_id,
+        "session_id": active_run.session_id,
         "trace_path": str(active_run.trace_path),
         "task": active_run.task,
         "status": active_run.status,
@@ -431,6 +473,7 @@ def _active_run_card(active_run: ActiveRun) -> dict[str, Any]:
 def _active_run_summary(active_run: ActiveRun) -> dict[str, Any]:
     return {
         "run_id": active_run.run_id,
+        "session_id": active_run.session_id,
         "status": active_run.status,
         "task": active_run.task,
         "model": active_run.model_profile,
@@ -454,6 +497,7 @@ def _overlay_summary(summary: dict[str, Any], active_run: ActiveRun | None) -> d
     if active_run is None:
         return summary
     merged = dict(summary)
+    merged["session_id"] = summary.get("session_id") or active_run.session_id
     merged["status"] = _display_status(summary.get("status"), active_run)
     merged["task"] = summary.get("task") or active_run.task
     merged["model"] = summary.get("model") or active_run.model_profile
@@ -494,6 +538,7 @@ def _run_state_payload(
         }
     return {
         "run_id": run_id,
+        "session_id": active_run.session_id,
         "status": active_run.status,
         "is_active": active_run.is_active,
         "trace_available": trace_path.is_file(),
@@ -506,6 +551,148 @@ def _run_state_payload(
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _list_thread_cards(app: FastAPI) -> list[dict[str, Any]]:
+    cards: dict[str, dict[str, Any]] = {}
+    session_store: SessionStore = app.state.session_store
+    for session_path in sorted(session_store.root.glob("*.json")):
+        try:
+            session_id = session_path.stem
+            record = session_store.load(session_id)
+        except Exception:
+            continue
+        cards[record.session_id] = _thread_card_from_record(app, record)
+    for active_run in _list_active_runs(app):
+        existing = cards.get(active_run.session_id)
+        if existing is None:
+            cards[active_run.session_id] = _active_thread_card(active_run)
+            continue
+        existing["is_active"] = True
+        existing["status"] = active_run.status
+        existing["latest_run_id"] = active_run.run_id
+        existing["task"] = active_run.task
+        existing["updated_at"] = active_run.started_at or active_run.submitted_at
+        existing["run_count"] = max(int(existing.get("run_count") or 0), 1)
+    return sorted(
+        cards.values(),
+        key=lambda card: str(card.get("updated_at") or card.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+def _thread_detail(app: FastAPI, session_id: str) -> dict[str, Any] | None:
+    session_store: SessionStore = app.state.session_store
+    record = session_store.load(session_id)
+    active_runs = [run for run in _list_active_runs(app) if run.session_id == session_id]
+    if not record.turns and not active_runs:
+        return None
+    run_cards = _thread_run_cards(app, record, active_runs)
+    latest_run_id = run_cards[0]["run_id"] if run_cards else None
+    return {
+        "session_id": record.session_id,
+        "summary": record.summary,
+        "cwd": record.cwd,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "turn_count": len(record.turns),
+        "latest_run_id": latest_run_id,
+        "is_active": any(run.is_active for run in active_runs),
+        "runs": run_cards,
+    }
+
+
+def _thread_card_from_record(app: FastAPI, record: Any) -> dict[str, Any]:
+    latest_turn = record.turns[-1] if record.turns else {}
+    latest_run_id = latest_turn.get("run_id")
+    latest_run_summary = _safe_run_summary(app.state.trace_root, latest_run_id)
+    return {
+        "session_id": record.session_id,
+        "task": latest_turn.get("user_message") or None,
+        "status": (
+            latest_run_summary.get("status")
+            if isinstance(latest_run_summary, dict)
+            else latest_turn.get("status")
+        ),
+        "summary": record.summary,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "run_count": len(record.turns),
+        "latest_run_id": latest_run_id,
+        "is_active": False,
+        "latest_run_status": latest_turn.get("status"),
+    }
+
+
+def _active_thread_card(active_run: ActiveRun) -> dict[str, Any]:
+    return {
+        "session_id": active_run.session_id,
+        "task": active_run.task,
+        "status": active_run.status,
+        "summary": "",
+        "created_at": active_run.submitted_at,
+        "updated_at": active_run.started_at or active_run.submitted_at,
+        "run_count": 1,
+        "latest_run_id": active_run.run_id,
+        "is_active": active_run.is_active,
+        "latest_run_status": active_run.status,
+    }
+
+
+def _thread_run_cards(
+    app: FastAPI,
+    record: Any,
+    active_runs: list[ActiveRun],
+) -> list[dict[str, Any]]:
+    active_by_run_id = {run.run_id: run for run in active_runs}
+    cards: list[dict[str, Any]] = []
+    for turn in reversed(record.turns):
+        run_id = turn.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            continue
+        summary = _safe_run_summary(app.state.trace_root, run_id)
+        active_run = active_by_run_id.pop(run_id, None)
+        if summary is not None:
+            cards.append(_run_card(summary, app.state.trace_root, active_run))
+            continue
+        if active_run is not None:
+            cards.append(_active_run_card(active_run))
+            continue
+        cards.append(
+            {
+                "run_id": run_id,
+                "session_id": record.session_id,
+                "trace_path": turn.get("trace_path"),
+                "task": turn.get("user_message"),
+                "status": turn.get("status"),
+                "model": None,
+                "provider": None,
+                "started_at": turn.get("created_at"),
+                "submitted_at": turn.get("created_at"),
+                "duration_seconds": None,
+                "iterations": None,
+                "max_iterations": None,
+                "total_events": None,
+                "failure_category": None,
+                "is_active": False,
+                "stream_path": f"/api/runs/{run_id}/stream",
+            }
+        )
+    for active_run in active_by_run_id.values():
+        cards.insert(0, _active_run_card(active_run))
+    return cards
+
+
+def _safe_run_summary(trace_root: Path, run_id: Any) -> dict[str, Any] | None:
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    trace_path = _trace_path_for_run(trace_root, run_id)
+    if not trace_path.is_file():
+        return None
+    try:
+        return summarize_trace(trace_path)
+    except Exception:
+        return None
 
 
 app = create_app()
