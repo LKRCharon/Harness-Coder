@@ -3,23 +3,39 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import shlex
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from harnesscoder.core.models import ModelAdapterError
 from harnesscoder.core.notes import NoteStore
 from harnesscoder.core.policy import ToolPolicy
 from harnesscoder.core.repo_map import build_repo_map
 from harnesscoder.core.runner import AgentRunner, RunResult
+from harnesscoder.core.safety_rules import (
+    SENSITIVE_FILE_NAMES,
+    SENSITIVE_FILE_SUFFIXES,
+    is_python_executable,
+    is_sensitive_workspace_path,
+    iter_sensitive_file_globs,
+)
 from harnesscoder.core.session import SessionStore
 from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.tools import (
+    CommandExecutionResult,
+    LocalCommandExecutor,
+    MacOSSeatbeltExecutor,
     ToolRegistry,
     ToolResult,
+    _is_sandbox_error,
+    _protected_sensitive_paths,
+    build_command_executor,
     normalize_python_command,
     redact_sensitive_text,
     safe_subprocess_env,
@@ -144,6 +160,47 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.metadata["returncode"], 0)
         self.assertNotIn("fake python should not run", result.output)
 
+    def test_macos_sandbox_blocks_writes_outside_workspace(self) -> None:
+        if sys.platform != "darwin":
+            self.skipTest("macOS sandbox test only runs on macOS")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root.parent / "sandbox-escape.txt"
+            outside.unlink(missing_ok=True)
+            registry = ToolRegistry(root)
+
+            result = registry.run_command(
+                call_id="call_escape",
+                cmd=f"touch {shlex.quote(str(outside))}",
+                timeout=30,
+            )
+
+            self.assertFalse(result.ok)
+            self.assertTrue(result.metadata["sandboxed"])
+            self.assertEqual(result.metadata["backend"], "macos-seatbelt")
+            self.assertFalse(outside.exists())
+
+    def test_build_command_executor_falls_back_without_sandbox_exec(self) -> None:
+        with mock.patch("harnesscoder.core.tools.sys.platform", "darwin"), mock.patch(
+            "harnesscoder.core.tools.Path.is_file",
+            return_value=False,
+        ):
+            executor = build_command_executor(Path.cwd())
+        self.assertIsInstance(executor, LocalCommandExecutor)
+
+    def test_build_command_executor_uses_local_executor_off_macos(self) -> None:
+        with mock.patch("harnesscoder.core.tools.sys.platform", "linux"):
+            executor = build_command_executor(Path.cwd())
+        self.assertIsInstance(executor, LocalCommandExecutor)
+
+    def test_build_command_executor_uses_macos_executor_when_available(self) -> None:
+        with mock.patch("harnesscoder.core.tools.sys.platform", "darwin"), mock.patch(
+            "harnesscoder.core.tools.Path.is_file",
+            return_value=True,
+        ):
+            executor = build_command_executor(Path.cwd())
+        self.assertIsInstance(executor, MacOSSeatbeltExecutor)
+
     def test_normalize_python_command_only_rewrites_bare_python(self) -> None:
         self.assertEqual(
             normalize_python_command(["python", "-m", "unittest"]),
@@ -157,6 +214,28 @@ class ToolRegistryTests(unittest.TestCase):
             normalize_python_command(["/usr/bin/python3", "-m", "unittest"]),
             ["/usr/bin/python3", "-m", "unittest"],
         )
+
+    def test_python_executable_detection_accepts_patch_version(self) -> None:
+        self.assertTrue(is_python_executable("python"))
+        self.assertTrue(is_python_executable("python3"))
+        self.assertTrue(is_python_executable("python3.12"))
+        self.assertTrue(is_python_executable("python3.12.1"))
+        self.assertFalse(is_python_executable("/usr/bin/python3"))
+
+    def test_sensitive_file_globs_follow_shared_constants(self) -> None:
+        globs = iter_sensitive_file_globs()
+        for name in SENSITIVE_FILE_NAMES:
+            self.assertIn(f"!**/{name}", globs)
+        for suffix in SENSITIVE_FILE_SUFFIXES:
+            self.assertIn(f"!**/*{suffix}", globs)
+        self.assertIn("!**/.env.*", globs)
+
+    def test_sensitive_workspace_path_helper_catches_names_and_suffixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertTrue(is_sensitive_workspace_path(root / ".env", root))
+            self.assertTrue(is_sensitive_workspace_path(root / "keys" / "private.pem", root))
+            self.assertFalse(is_sensitive_workspace_path(root / "src" / "app.py", root))
 
     def test_repo_map_extracts_python_symbols_and_omits_local_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,6 +339,135 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertTrue(result.ok, result.error)
         self.assertIn("sample.py", result.output)
+
+    def test_search_code_reports_executor_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "sample.py").write_text("needle = 1\n", encoding="utf-8")
+            result = ToolRegistry(root).search_code(
+                call_id="call_search_meta",
+                query="needle",
+                path=".",
+            )
+
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("executor_backend", result.metadata)
+        self.assertIn("sandboxed", result.metadata)
+        self.assertIn("sandbox_error", result.metadata)
+
+    def test_search_code_uses_safe_env_and_executor(self) -> None:
+        captured: dict[str, object] = {}
+
+        class RecordingExecutor:
+            backend = "recording"
+            sandboxed = True
+
+            def run(self, *, parts, cwd, env, timeout):
+                captured["parts"] = parts
+                captured["cwd"] = cwd
+                captured["env"] = dict(env)
+                captured["timeout"] = timeout
+                return CommandExecutionResult(
+                    returncode=0,
+                    stdout="sample.py:1:needle = 1\n",
+                    stderr="",
+                    duration_seconds=0.01,
+                    backend=self.backend,
+                    sandboxed=self.sandboxed,
+                )
+
+        previous = os.environ.get("HARNESSCODER_TEST_API_KEY")
+        os.environ["HARNESSCODER_TEST_API_KEY"] = "very-secret-value-xyz"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "sample.py").write_text("needle = 1\n", encoding="utf-8")
+                result = ToolRegistry(root, command_executor=RecordingExecutor()).search_code(
+                    call_id="call_search_safe_env",
+                    query="needle",
+                    path=".",
+                )
+        finally:
+            if previous is None:
+                os.environ.pop("HARNESSCODER_TEST_API_KEY", None)
+            else:
+                os.environ["HARNESSCODER_TEST_API_KEY"] = previous
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.metadata["executor_backend"], "recording")
+        self.assertTrue(result.metadata["sandboxed"])
+        self.assertFalse(result.metadata["sandbox_error"])
+        self.assertNotIn("HARNESSCODER_TEST_API_KEY", captured["env"])
+        self.assertEqual(captured["parts"][0], "rg")
+
+    def test_search_code_timeout_reports_sandbox_metadata(self) -> None:
+        class TimeoutExecutor:
+            backend = "timeout-executor"
+            sandboxed = True
+
+            def run(self, *, parts, cwd, env, timeout):
+                raise subprocess.TimeoutExpired(parts, timeout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "sample.py").write_text("needle = 1\n", encoding="utf-8")
+            result = ToolRegistry(root, command_executor=TimeoutExecutor()).search_code(
+                call_id="call_search_timeout",
+                query="needle",
+                path=".",
+            )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.metadata["timed_out"])
+        self.assertTrue(result.metadata["sandboxed"])
+        self.assertIn("sandbox_error", result.metadata)
+        self.assertFalse(result.metadata["sandbox_error"])
+
+    def test_run_command_timeout_reports_sandbox_metadata(self) -> None:
+        class TimeoutExecutor:
+            backend = "timeout-executor"
+            sandboxed = True
+
+            def run(self, *, parts, cwd, env, timeout):
+                raise subprocess.TimeoutExpired(parts, timeout, output="sandbox wait", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = ToolRegistry(root, command_executor=TimeoutExecutor()).run_command(
+                call_id="call_timeout",
+                cmd="echo hello",
+                timeout=5,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.metadata["timed_out"])
+        self.assertTrue(result.metadata["sandboxed"])
+        self.assertTrue(result.metadata["sandbox_error"])
+
+    def test_sandbox_error_detects_signal_terminated_process(self) -> None:
+        self.assertTrue(_is_sandbox_error(True, "", returncode=-9))
+        self.assertFalse(_is_sandbox_error(True, "", returncode=1))
+        self.assertFalse(_is_sandbox_error(False, "", returncode=-9))
+
+    def test_protected_sensitive_paths_include_home_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            protected = _protected_sensitive_paths(root)
+
+        home = Path.home()
+        expected = {
+            path
+            for path in {
+                home / ".ssh",
+                home / ".aws",
+                home / ".gnupg",
+                home / ".config" / "gcloud",
+                home / ".npmrc",
+                home / ".pypirc",
+            }
+            if path.exists()
+        }
+        self.assertTrue(expected.issubset(set(protected)))
 
     def test_note_tools_create_and_search_durable_notes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -14,7 +14,12 @@ from harnesscoder.core.notes import (
     MAX_NOTE_TITLE_CHARS,
     NOTE_TYPES,
 )
-from harnesscoder.core.tools import SENSITIVE_FILE_NAMES, SENSITIVE_FILE_SUFFIXES
+from harnesscoder.core.safety_rules import (
+    SENSITIVE_FILE_NAMES,
+    SENSITIVE_FILE_SUFFIXES,
+    is_python_executable,
+    is_sensitive_workspace_path,
+)
 
 
 @dataclass(slots=True)
@@ -117,7 +122,7 @@ class ToolPolicy:
         target = (base / raw_path).resolve()
         if not _is_relative_to(target, base):
             return PolicyDecision(False, f"{tool_name} path escapes workspace")
-        if tool_name == "read_file" and _is_sensitive_workspace_path(target, base):
+        if tool_name == "read_file" and is_sensitive_workspace_path(target, base):
             return PolicyDecision(False, "read_file target is a sensitive local file")
         return PolicyDecision(True, f"{tool_name} path is inside workspace")
 
@@ -305,7 +310,7 @@ class ToolPolicy:
         if head in self._allowed_test_commands:
             return PolicyDecision(True, "pytest/unittest command allowed")
 
-        if not _is_python_head(head):
+        if not is_python_executable(head):
             return PolicyDecision(False, f"test command is not allowed: {parts[0]}")
 
         index = 1
@@ -353,7 +358,7 @@ class ToolPolicy:
                 target = (base / candidate).resolve()
                 if not _is_relative_to(target, base):
                     return PolicyDecision(False, f"command path escapes workspace: {candidate}")
-                if _is_sensitive_workspace_path(target, base):
+                if is_sensitive_workspace_path(target, base):
                     return PolicyDecision(False, f"command path is sensitive: {candidate}")
         return PolicyDecision(True, "command path arguments stay inside workspace")
 
@@ -374,26 +379,6 @@ def _is_relative_to(path: Path, base: Path) -> bool:
     except ValueError:
         return False
     return True
-
-
-def _is_python_head(head: str) -> bool:
-    if head in {"python", "python3"}:
-        return True
-    if not head.startswith("python3."):
-        return False
-    suffix = head[len("python3.") :]
-    return suffix.isdigit()
-
-
-def _is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:
-    try:
-        rel = path.relative_to(cwd)
-    except ValueError:
-        return True
-    for part in rel.parts:
-        if part in SENSITIVE_FILE_NAMES or part.startswith(".env."):
-            return True
-    return path.name.endswith(SENSITIVE_FILE_SUFFIXES)
 
 
 def _mentions_sensitive_path(value: str) -> bool:

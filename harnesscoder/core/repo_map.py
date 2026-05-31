@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from harnesscoder.core.safety_rules import SENSITIVE_FILE_NAMES, SENSITIVE_FILE_SUFFIXES
+
 
 DEFAULT_REPO_MAP_MAX_FILES = 80
 DEFAULT_REPO_MAP_MAX_TOKENS = 1200
@@ -20,14 +22,6 @@ _IGNORED_DIRS = {
     "__pycache__",
     "node_modules",
 }
-_SENSITIVE_NAMES = {
-    ".env",
-    ".env.local",
-    ".env.production",
-    ".envrc",
-    "models.toml",
-}
-_SENSITIVE_SUFFIXES = (".key", ".pem", ".p12", ".pfx", ".pyc", ".sqlite", ".db")
 _TEXT_EXTENSIONS = {
     ".cfg",
     ".ini",
@@ -349,9 +343,9 @@ def _is_ignored(path: Path, cwd: Path) -> bool:
     if any(part in _IGNORED_DIRS for part in rel.parts):
         return True
     name = path.name
-    if name in _SENSITIVE_NAMES or name.startswith(".env."):
+    if name in SENSITIVE_FILE_NAMES or name.startswith(".env."):
         return True
-    if name.endswith(_SENSITIVE_SUFFIXES):
+    if name.endswith(SENSITIVE_FILE_SUFFIXES) or name.endswith(".pyc"):
         return True
     return not (path.suffix in _TEXT_EXTENSIONS or path.suffix == "")
 

@@ -7,25 +7,59 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from harnesscoder.core.notes import NoteStore
 from harnesscoder.core.repo_map import RepoMapCache
+from harnesscoder.core.safety_rules import (
+    SENSITIVE_FILE_NAMES,
+    SENSITIVE_FILE_SUFFIXES,
+    is_python_executable,
+    is_sensitive_workspace_path,
+    iter_sensitive_file_globs,
+)
 
 
 DEFAULT_TEST_COMMAND = "python -m unittest discover"
 MAX_COMMAND_TIMEOUT = 120
-SENSITIVE_FILE_NAMES = {
+MACOS_SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
+MACOS_SANDBOX_PROTECTED_PATHS = (".git", ".codex", ".agents")
+MACOS_SANDBOX_SENSITIVE_FILE_PATTERNS = (
     ".env",
     ".env.local",
     ".env.production",
     ".envrc",
     "models.toml",
-}
-SENSITIVE_FILE_SUFFIXES = (".key", ".pem", ".p12", ".pfx", ".sqlite", ".db")
+    "*.key",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.sqlite",
+    "*.db",
+)
+MACOS_SANDBOX_MACH_LOOKUPS = (
+    "com.apple.system.opendirectoryd.libinfo",
+    "com.apple.cfprefsd.agent",
+    "com.apple.cfprefsd.daemon",
+    "com.apple.PowerManagement.control",
+    "com.apple.system.notification_center",
+    "com.apple.trustd",
+    "com.apple.trustd.agent",
+    "com.apple.logd",
+    "com.apple.logd.events",
+)
+MACOS_SANDBOX_HOME_PROTECTED_PATHS = (
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".config/gcloud",
+    ".npmrc",
+    ".pypirc",
+)
 SENSITIVE_ENV_MARKERS = (
     "API_KEY",
     "TOKEN",
@@ -71,11 +105,120 @@ class ToolResult:
 ToolFn = Callable[..., ToolResult]
 
 
+@dataclass(slots=True)
+class CommandExecutionResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    duration_seconds: float
+    backend: str
+    sandboxed: bool
+    timed_out: bool = False
+
+
+class CommandExecutor(Protocol):
+    def run(
+        self,
+        *,
+        parts: list[str],
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int,
+    ) -> CommandExecutionResult: ...
+
+
+class LocalCommandExecutor:
+    backend = "local"
+    sandboxed = False
+
+    def run(
+        self,
+        *,
+        parts: list[str],
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int,
+    ) -> CommandExecutionResult:
+        started = time.monotonic()
+        completed = subprocess.run(
+            parts,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            env=env,
+        )
+        return CommandExecutionResult(
+            returncode=completed.returncode,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+            duration_seconds=time.monotonic() - started,
+            backend=self.backend,
+            sandboxed=self.sandboxed,
+        )
+
+
+class MacOSSeatbeltExecutor:
+    backend = "macos-seatbelt"
+    sandboxed = True
+
+    def __init__(self, workspace_root: Path, sandbox_executable: str = MACOS_SANDBOX_EXECUTABLE) -> None:
+        self.workspace_root = workspace_root.resolve()
+        self.sandbox_executable = sandbox_executable
+
+    def run(
+        self,
+        *,
+        parts: list[str],
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int,
+    ) -> CommandExecutionResult:
+        profile = _build_macos_seatbelt_profile(self.workspace_root)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".sb",
+            delete=False,
+        ) as handle:
+            handle.write(profile)
+            profile_path = Path(handle.name)
+
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                [self.sandbox_executable, "-f", str(profile_path), *parts],
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+                env=env,
+            )
+        finally:
+            profile_path.unlink(missing_ok=True)
+
+        return CommandExecutionResult(
+            returncode=completed.returncode,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+            duration_seconds=time.monotonic() - started,
+            backend=self.backend,
+            sandboxed=self.sandboxed,
+        )
+
+
 class ToolRegistry:
-    def __init__(self, cwd: Path) -> None:
+    def __init__(
+        self,
+        cwd: Path,
+        command_executor: CommandExecutor | None = None,
+    ) -> None:
         self.cwd = cwd.resolve()
         self._repo_map = RepoMapCache(self.cwd)
         self._notes = NoteStore.for_workspace(self.cwd)
+        self._command_executor = command_executor or build_command_executor(self.cwd)
         self._tools: dict[str, ToolFn] = {
             "read_file": self.read_file,
             "search_code": self.search_code,
@@ -87,6 +230,10 @@ class ToolRegistry:
             "create_note": self.create_note,
             "search_notes": self.search_notes,
         }
+
+    @property
+    def command_executor_backend(self) -> str:
+        return getattr(self._command_executor, "backend", "local")
 
     def execute(self, call_id: str, tool_name: str, tool_args: dict[str, Any]) -> ToolResult:
         tool = self._tools.get(tool_name)
@@ -126,7 +273,7 @@ class ToolRegistry:
     ) -> ToolResult:
         tool_name = "read_file"
         target = self._resolve_workspace_path(path)
-        if _is_sensitive_workspace_path(target, self.cwd):
+        if is_sensitive_workspace_path(target, self.cwd):
             return ToolResult(
                 call_id,
                 tool_name,
@@ -182,50 +329,64 @@ class ToolRegistry:
                 "!.git/**",
                 "--glob",
                 "!.harnesscoder/**",
-                "--glob",
-                "!**/.env",
-                "--glob",
-                "!**/.env.*",
-                "--glob",
-                "!**/.envrc",
-                "--glob",
-                "!**/models.toml",
-                "--glob",
-                "!**/*.key",
-                "--glob",
-                "!**/*.pem",
-                "--glob",
-                "!**/*.p12",
-                "--glob",
-                "!**/*.pfx",
-                "--glob",
-                "!**/*.sqlite",
-                "--glob",
-                "!**/*.db",
-                query,
-                str(target.relative_to(self.cwd)),
             ]
-            completed = subprocess.run(
-                cmd,
-                cwd=self.cwd,
-                text=True,
-                capture_output=True,
-                timeout=20,
-                check=False,
-            )
-            ok = completed.returncode in {0, 1}
-            output = completed.stdout if completed.stdout else completed.stderr
+            for pattern in iter_sensitive_file_globs():
+                cmd.extend(["--glob", pattern])
+            cmd.extend([query, str(target.relative_to(self.cwd))])
+            env = safe_subprocess_env()
+            try:
+                execution = self._command_executor.run(
+                    parts=cmd,
+                    cwd=self.cwd,
+                    env=env,
+                    timeout=20,
+                )
+            except FileNotFoundError:
+                return ToolResult(call_id, tool_name, False, "", "command not found: rg")
+            except subprocess.TimeoutExpired:
+                output = redact_sensitive_text("")
+                sandboxed = getattr(self._command_executor, "sandboxed", False)
+                return ToolResult(
+                    call_id,
+                    tool_name,
+                    False,
+                    output,
+                    "search_code timed out after 20s",
+                    metadata={
+                        "query": query,
+                        "path": str(target.relative_to(self.cwd)),
+                        "backend": "rg",
+                        "executor_backend": getattr(self._command_executor, "backend", "local"),
+                        "sandboxed": sandboxed,
+                        "timed_out": True,
+                        "sandbox_error": _is_sandbox_error(
+                            sandboxed,
+                            output,
+                            timed_out=True,
+                        ),
+                    },
+                )
+            ok = execution.returncode in {0, 1}
+            output = execution.stdout if execution.stdout else execution.stderr
+            output = redact_sensitive_text(output.strip())
             return ToolResult(
                 call_id=call_id,
                 tool_name=tool_name,
                 ok=ok,
-                output=output.strip(),
-                error=None if ok else output.strip(),
+                output=output,
+                error=None if ok else output,
                 metadata={
                     "query": query,
                     "path": str(target.relative_to(self.cwd)),
                     "backend": "rg",
-                    "returncode": completed.returncode,
+                    "returncode": execution.returncode,
+                    "executor_backend": execution.backend,
+                    "sandboxed": execution.sandboxed,
+                    "sandbox_error": _is_sandbox_error(
+                        execution.sandboxed,
+                        output,
+                        returncode=execution.returncode,
+                    ),
                 },
             )
 
@@ -633,22 +794,18 @@ class ToolRegistry:
                 "PYTHONUTF8": "1",
             }
         )
-        started = time.monotonic()
         try:
-            completed = subprocess.run(
-                parts,
+            execution = self._command_executor.run(
+                parts=parts,
                 cwd=self.cwd,
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-                check=False,
                 env=env,
+                timeout=timeout,
             )
         except FileNotFoundError:
             return ToolResult(call_id, tool_name, False, "", f"command not found: {parts[0]}")
         except subprocess.TimeoutExpired as exc:
-            duration_seconds = time.monotonic() - started
             output = redact_sensitive_text((exc.stdout or "") + (exc.stderr or ""))
+            sandboxed = getattr(self._command_executor, "sandboxed", False)
             return ToolResult(
                 call_id,
                 tool_name,
@@ -658,26 +815,40 @@ class ToolRegistry:
                 metadata={
                     "cmd": cmd,
                     "timeout": timeout,
-                    "duration_seconds": duration_seconds,
+                    "duration_seconds": getattr(exc, "duration", None),
                     "timed_out": True,
+                    "sandboxed": sandboxed,
+                    "backend": getattr(self._command_executor, "backend", "local"),
+                    "sandbox_error": _is_sandbox_error(
+                        sandboxed,
+                        output,
+                        timed_out=True,
+                    ),
                 },
             )
 
-        duration_seconds = time.monotonic() - started
-        combined = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+        combined = "\n".join(part for part in [execution.stdout, execution.stderr] if part)
         combined = redact_sensitive_text(combined)
         return ToolResult(
             call_id=call_id,
             tool_name=tool_name,
-            ok=completed.returncode == 0,
+            ok=execution.returncode == 0,
             output=combined.strip(),
-            error=None if completed.returncode == 0 else f"exit code {completed.returncode}",
+            error=None if execution.returncode == 0 else f"exit code {execution.returncode}",
             metadata={
                 "cmd": cmd,
                 "timeout": timeout,
-                "returncode": completed.returncode,
-                "duration_seconds": duration_seconds,
-                "timed_out": False,
+                "returncode": execution.returncode,
+                "duration_seconds": execution.duration_seconds,
+                "timed_out": execution.timed_out,
+                "sandboxed": execution.sandboxed,
+                "backend": execution.backend,
+                "sandbox_error": _is_sandbox_error(
+                    execution.sandboxed,
+                    combined,
+                    returncode=execution.returncode,
+                    timed_out=execution.timed_out,
+                ),
             },
         )
 
@@ -740,6 +911,150 @@ def safe_subprocess_env(extra_env: dict[str, str] | None = None) -> dict[str, st
     return env
 
 
+def build_command_executor(cwd: Path) -> CommandExecutor:
+    if sys.platform == "darwin" and Path(MACOS_SANDBOX_EXECUTABLE).is_file():
+        return MacOSSeatbeltExecutor(cwd)
+    return LocalCommandExecutor()
+
+
+def _build_macos_seatbelt_profile(workspace_root: Path) -> str:
+    workspace_root = workspace_root.resolve()
+    allowed_write_paths = _dedupe_existing_paths(
+        [workspace_root, Path("/tmp"), Path("/private/tmp"), Path("/var/tmp"), Path("/private/var/tmp")]
+    )
+    write_rules = "\n".join(
+        _sandbox_write_clause(path, workspace_root)
+        for path in allowed_write_paths
+    )
+    deny_rules = "\n".join(
+        _sandbox_deny_clause(path)
+        for path in _protected_sensitive_paths(workspace_root)
+    )
+    return "\n".join(
+        [
+            "(version 1)",
+            "(deny default)",
+            "(allow process-exec)",
+            "(allow process-fork)",
+            "(allow signal (target same-sandbox))",
+            "(allow process-info* (target same-sandbox))",
+            "(deny network*)",
+            '(allow file-write-data (literal "/dev/null"))',
+            "(allow file-read* file-test-existence (subpath \"/\"))",
+            "(allow file-read-metadata (literal \"/\"))",
+            "(allow file-read* file-write* (subpath \"/dev\"))",
+            "(allow file-ioctl (subpath \"/dev\"))",
+            "(allow pseudo-tty)",
+            "(allow sysctl-read)",
+            "(allow mach-lookup",
+            *[f'  (global-name "{name}")' for name in MACOS_SANDBOX_MACH_LOOKUPS],
+            '  (local-name "com.apple.cfprefsd.agent")',
+            ")",
+            "(allow ipc-posix-sem)",
+            "(allow ipc-posix-shm*)",
+            "(allow system-socket)",
+            "(allow file-map-executable",
+            '  (subpath "/System")',
+            '  (subpath "/Library")',
+            '  (subpath "/usr")',
+            '  (subpath "/opt/homebrew")',
+            '  (subpath "/usr/local")',
+            ")",
+            *([deny_rules] if deny_rules else []),
+            "(allow file-write*",
+            write_rules,
+            ")",
+        ]
+    )
+
+
+def _dedupe_existing_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen or not resolved.exists():
+            continue
+        seen.add(key)
+        result.append(resolved)
+    return result
+
+
+def _protected_sensitive_paths(workspace_root: Path) -> list[Path]:
+    protected: list[Path] = []
+    for relative in MACOS_SANDBOX_PROTECTED_PATHS:
+        protected.append(workspace_root / relative)
+    for pattern in MACOS_SANDBOX_SENSITIVE_FILE_PATTERNS:
+        protected.extend(candidate for candidate in workspace_root.glob(pattern) if candidate.exists())
+    home = Path.home()
+    for relative in MACOS_SANDBOX_HOME_PROTECTED_PATHS:
+        protected.append(home / relative)
+    return _dedupe_existing_paths(protected)
+
+
+def _sandbox_deny_clause(path: Path) -> str:
+    escaped = _escape_sbpl_path(path)
+    operations = "file-read* file-write* file-read-metadata file-test-existence"
+    if path.is_dir():
+        return "\n".join(
+            [
+                f'(deny {operations} (literal "{escaped}"))',
+                f'(deny {operations} (subpath "{escaped}"))',
+            ]
+        )
+    return f'(deny {operations} (literal "{escaped}"))'
+
+
+def _sandbox_write_clause(path: Path, workspace_root: Path) -> str:
+    escaped = _escape_sbpl_path(path)
+    exclusions: list[Path] = []
+    if path == workspace_root:
+        exclusions.extend(workspace_root / relative for relative in MACOS_SANDBOX_PROTECTED_PATHS)
+        exclusions.extend(_protected_sensitive_paths(workspace_root))
+    exclusion_checks = []
+    for excluded in _dedupe_existing_paths(exclusions):
+        escaped_excluded = _escape_sbpl_path(excluded)
+        exclusion_checks.append(f'(require-not (literal "{escaped_excluded}"))')
+        exclusion_checks.append(f'(require-not (subpath "{escaped_excluded}"))')
+    if not exclusion_checks:
+        return f'  (subpath "{escaped}")'
+    checks = " ".join([f'(subpath "{escaped}")', *exclusion_checks])
+    return f"  (require-all {checks})"
+
+
+def _escape_sbpl_path(path: Path) -> str:
+    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _is_sandbox_error(
+    sandboxed: bool,
+    output: str,
+    *,
+    returncode: int | None = None,
+    timed_out: bool = False,
+) -> bool:
+    if not sandboxed:
+        return False
+    if returncode is not None and returncode < 0:
+        return True
+    normalized = output.lower()
+    markers = (
+        "operation not permitted",
+        "sandbox-exec:",
+        "sandbox violation",
+        "deny(",
+    )
+    if any(marker in normalized for marker in markers):
+        return True
+    if timed_out and "sandbox" in normalized:
+        return True
+    return False
+
+
 def redact_sensitive_text(text: str) -> str:
     redacted = text
     for key, value in os.environ.items():
@@ -768,27 +1083,9 @@ def normalize_python_command(parts: list[str]) -> list[str]:
     if not parts:
         return parts
     head = parts[0]
-    if head in {"python", "python3"} or _is_python_version_head(head):
+    if is_python_executable(head):
         return [sys.executable, *parts[1:]]
     return parts
-
-
-def _is_python_version_head(head: str) -> bool:
-    if not head.startswith("python3."):
-        return False
-    suffix = head[len("python3.") :]
-    return bool(suffix) and all(part.isdigit() for part in suffix.split("."))
-
-
-def _is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:
-    try:
-        rel = path.relative_to(cwd)
-    except ValueError:
-        return True
-    for part in rel.parts:
-        if part in SENSITIVE_FILE_NAMES or part.startswith(".env."):
-            return True
-    return path.name.endswith(SENSITIVE_FILE_SUFFIXES)
 
 
 def _is_ignored_search_path(path: Path, cwd: Path) -> bool:
@@ -804,4 +1101,4 @@ def _is_ignored_search_path(path: Path, cwd: Path) -> bool:
         return True
     if any(part in IGNORED_SEARCH_DIRS for part in rel.parts):
         return True
-    return _is_sensitive_workspace_path(path, cwd)
+    return is_sensitive_workspace_path(path, cwd)
