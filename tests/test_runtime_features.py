@@ -606,6 +606,15 @@ class PolicyTests(unittest.TestCase):
         denied = policy.check("run_tests", {"cmd": "python -c 'print(1)'"}, root)
         self.assertFalse(denied.allowed)
 
+    def test_run_tests_policy_accepts_python_patch_version_head(self) -> None:
+        policy = ToolPolicy()
+        decision = policy.check(
+            "run_tests",
+            {"cmd": "python3.12.1 -m unittest discover"},
+            Path.cwd(),
+        )
+        self.assertTrue(decision.allowed, decision.reason)
+
     def test_edit_file_rejects_workspace_escape(self) -> None:
         policy = ToolPolicy()
         decision = policy.check(
