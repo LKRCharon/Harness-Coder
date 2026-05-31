@@ -103,6 +103,7 @@ class Spec030Tests(unittest.TestCase):
         allowed_categories = {
             "success",
             "test_failed",
+            "sandbox_error",
             "policy_denied",
             "tool_failed",
             "verifier_failed",

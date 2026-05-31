@@ -834,6 +834,7 @@ class ContextMemoryRunnerTests(unittest.TestCase):
             run_started["model_metadata"]["reasoning_effort"],
             "xhigh",
         )
+        self.assertIn("executor_type", run_started)
         self.assertEqual(summary["model_metadata"]["effective_reasoning_effort"], "xhigh")
         self.assertNotIn("api_key", json.dumps(run_started["model_metadata"]))
 
@@ -1220,6 +1221,50 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["metrics"]["stable_prefix_change_count"], 1)
         self.assertEqual(summary["failure_category"], "max_iterations")
 
+    def test_runner_classifies_sandbox_test_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTest(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            escape_script = tests_dir / "test_escape_script.py"
+            escape_script.write_text(
+                "from pathlib import Path\n"
+                "Path('../sandbox_escape').touch()\n",
+                encoding="utf-8",
+            )
+            escape_script.chmod(
+                escape_script.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+            runner = AgentRunner(
+                model=_PassThenSandboxFailTestsModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=2,
+            )
+
+            result = runner.run("Run tests, then trigger a sandbox failure.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            latest_test = [record for record in records if record["type"] == "test_result"][-1]
+
+        self.assertEqual(result.status, "max_iterations")
+        self.assertEqual(latest_test["failure_category"], "sandbox_error")
+        self.assertEqual(summary["metrics"]["sandbox_error_count"], 1)
+        self.assertEqual(summary["failure_category"], "sandbox_error")
+
     def test_finish_grace_is_not_offered_without_successful_tests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1581,6 +1626,30 @@ class _PassThenFailTestsModel:
             rationale="Run a failing command.",
             tool_name="run_tests",
             tool_args={"cmd": "python -m unittest missing_module"},
+        )
+
+
+class _PassThenSandboxFailTestsModel:
+    name = "pass-then-sandbox-fail-tests"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        tests = [
+            observation
+            for observation in state.observations
+            if observation.tool_name == "run_tests"
+        ]
+        if not tests:
+            return ModelAction(
+                kind="tool",
+                rationale="Run passing tests.",
+                tool_name="run_tests",
+                tool_args={"cmd": "python -m unittest discover"},
+            )
+        return ModelAction(
+            kind="tool",
+            rationale="Trigger sandbox denial via write outside workspace.",
+            tool_name="run_tests",
+            tool_args={"cmd": "python tests/test_escape_script.py"},
         )
 
 

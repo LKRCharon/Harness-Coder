@@ -112,6 +112,7 @@ class AgentRunner:
             cwd=str(self.cwd),
             model=getattr(self.model, "name", type(self.model).__name__),
             model_metadata=self._model_metadata(),
+            executor_type=self.tools.command_executor_backend,
             max_iterations=self.max_iterations,
             context_mode=self.context_mode,
             repo_map_max_tokens=self.repo_map_max_tokens,
@@ -703,6 +704,8 @@ class AgentRunner:
     def _classify_test_result(self, result: ToolResult) -> str | None:
         if result.ok:
             return None
+        if result.metadata.get("sandbox_error") is True:
+            return "sandbox_error"
         detail = result.error or result.output
         if "policy denied" in detail:
             return "policy_denied"

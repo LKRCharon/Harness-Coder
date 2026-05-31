@@ -284,6 +284,7 @@ def _metrics_summary(
         "verifier_result_count": _event_count(records, "verifier_result"),
         "resume_success_rate": _resume_success_rate(records, status),
         "model_error_count": _event_count(records, "model_error"),
+        "sandbox_error_count": _sandbox_error_count(records),
         "transient_provider_error_count": _transient_provider_error_count(records),
         "model_error_breakdown": _model_error_breakdown(records),
         "model_error_status_breakdown": _model_error_status_breakdown(records),
@@ -877,6 +878,8 @@ def _failure_category(
         and metrics.get("verifier_passed") is not False
     ):
         return "success"
+    if _as_int(metrics.get("sandbox_error_count")) > 0:
+        return "sandbox_error"
     if metrics.get("test_passed") is False:
         return "test_failed"
     if status == "max_iterations":
@@ -1076,6 +1079,18 @@ def _test_result(records: list[JsonRecord]) -> JsonRecord | None:
 
 def _verifier_result(records: list[JsonRecord]) -> JsonRecord | None:
     return _last_structured_result(records, "verifier_result")
+
+
+def _sandbox_error_count(records: list[JsonRecord]) -> int:
+    total = 0
+    for record in records:
+        result = _tool_result(record)
+        if result is None:
+            continue
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("sandbox_error") is True:
+            total += 1
+    return total
 
 
 def _last_structured_result(
