@@ -386,26 +386,16 @@ Finish discipline:
 - When remaining budget is low, prefer finish over redundant reads or repeated
   test commands.
 
-Tool schemas:
-- read_file(path: string, offset: int = 0, limit: int = 200)
-- search_code(query: string, path: string = ".")
-- repo_map(query: string | null = null, max_tokens: int = 1200, refresh: boolean = false)
-- write_file(path: string, content: string, overwrite: boolean = false)
-- edit_file(path: string, old: string, new: string)
-- run_tests(cmd: string | null = null, timeout: int = 60)
-- run_command(cmd: string, timeout: int = 30)
-- create_note(title: string, content: string, note_type: string = "general", tags: string[] = [])
-- search_notes(query: string, limit: int = 5, note_type: string | null = null)
+Answer in the user's language when finishing."""
 
-Use write_file for new files in greenfield tasks. Use edit_file only for exact
+MODEL_TOOL_GUIDANCE = """Use write_file for new files in greenfield tasks. Use edit_file only for exact
 replacements where old is expected to match once. Prefer run_tests for local
 python/pytest/unittest test execution. Reserve run_command for repository
 inspection and other policy-allowed commands. The policy layer may deny unsafe
 commands. Use create_note only for durable task state that should survive the
 current run: blockers, actions, task_state, decisions, conclusions, or verified
 facts. Use search_notes when continuing long-running codebase work and prior
-blockers, task state, decisions, or verified facts may affect the next action.
-Answer in the user's language when finishing."""
+blockers, task state, decisions, or verified facts may affect the next action."""
 
 
 def _normalize_openai_base_url(base_url: str) -> str:

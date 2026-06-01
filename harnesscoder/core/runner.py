@@ -18,6 +18,7 @@ from harnesscoder.core.context import build_context_pack
 from harnesscoder.core.memory import apply_memory_reducer, memory_blocks_to_records
 from harnesscoder.core.models import (
     MODEL_SYSTEM_PROMPT,
+    MODEL_TOOL_GUIDANCE,
     MODEL_TOOL_NAMES,
     ModelAdapter,
     ModelAdapterError,
@@ -69,8 +70,8 @@ class AgentRunner:
         self.trace_root = trace_root
         self.max_iterations = max_iterations
         self.context_mode = context_mode
-        self.policy = policy or ToolPolicy()
         self.tools = tools or ToolRegistry(self.cwd)
+        self.policy = policy or ToolPolicy(schemas=self.tools.get_schemas())
         self.repo_map = RepoMapCache(self.cwd)
         self.note_store = NoteStore.for_workspace(self.cwd)
         self.repo_map_max_tokens = repo_map_max_tokens
@@ -191,7 +192,7 @@ class AgentRunner:
                 )
             context = assemble_context(
                 state=state,
-                system_instructions=MODEL_SYSTEM_PROMPT,
+                system_instructions=self._build_system_instructions(),
                 available_tools=self._available_tools(),
                 context_pack=context_pack,
                 context_mode=self.context_mode,
@@ -370,7 +371,7 @@ class AgentRunner:
                 context_pack = build_context_pack(state)
                 context = assemble_context(
                     state=state,
-                    system_instructions=MODEL_SYSTEM_PROMPT,
+                    system_instructions=self._build_system_instructions(),
                     available_tools=[],
                     context_pack=context_pack,
                     context_mode=self.context_mode,
@@ -557,6 +558,14 @@ class AgentRunner:
             for tool_name in MODEL_TOOL_NAMES
             if tool_name in self.policy.allowed_tools
         ]
+
+    def _build_system_instructions(self) -> str:
+        tool_schema_text = self.tools.get_prompt_text()
+        parts = [MODEL_SYSTEM_PROMPT]
+        if tool_schema_text:
+            parts.append(f"\nTool schemas:\n{tool_schema_text}")
+        parts.append(f"\n{MODEL_TOOL_GUIDANCE}")
+        return "\n".join(parts)
 
     def _model_metadata(self) -> dict[str, object]:
         metadata_provider = getattr(self.model, "model_metadata", None)

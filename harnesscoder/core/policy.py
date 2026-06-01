@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,9 @@ from harnesscoder.core.safety_rules import (
     SENSITIVE_FILE_SUFFIXES,
     is_python_executable,
     is_sensitive_workspace_path,
+    parse_command,
 )
+from harnesscoder.core.tool_schema import ToolSchema
 
 
 @dataclass(slots=True)
@@ -34,8 +35,13 @@ class PolicyDecision:
 class ToolPolicy:
     """Small local policy gate for MVP tool execution."""
 
-    def __init__(self, allowed_tools: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        allowed_tools: set[str] | None = None,
+        schemas: dict[str, ToolSchema] | None = None,
+    ) -> None:
         self.allowed_tools = set(allowed_tools) if allowed_tools is not None else None
+        self._schemas = schemas or {}
 
     _blocked_command_heads = {
         "rm",
@@ -82,6 +88,12 @@ class ToolPolicy:
             return PolicyDecision(False, "missing tool name")
         if self.allowed_tools is not None and tool_name not in self.allowed_tools:
             return PolicyDecision(False, f"tool is not allowed for this run: {tool_name}")
+
+        schema = self._schemas.get(tool_name)
+        if schema is not None:
+            error = schema.validate_args(tool_args)
+            if error:
+                return PolicyDecision(False, f"schema validation: {error}")
 
         if tool_name in {"read_file", "search_code"}:
             return self._check_path_tool(tool_name, tool_args, cwd)
@@ -187,13 +199,11 @@ class ToolPolicy:
             if token in cmd:
                 return PolicyDecision(False, f"shell control token blocked: {token}")
 
-        try:
-            parts = shlex.split(cmd)
-        except ValueError as exc:
-            return PolicyDecision(False, f"could not parse command: {exc}")
-
-        if not parts:
-            return PolicyDecision(False, "cmd parsed to no arguments")
+        parts, parse_error = parse_command(cmd)
+        if parts is None:
+            if parse_error == "cmd parsed to no arguments":
+                return PolicyDecision(False, parse_error)
+            return PolicyDecision(False, f"could not parse command: {parse_error}")
 
         head = Path(parts[0]).name
 
@@ -234,13 +244,11 @@ class ToolPolicy:
             if token in cmd:
                 return PolicyDecision(False, f"shell control token blocked: {token}")
 
-        try:
-            parts = shlex.split(cmd)
-        except ValueError as exc:
-            return PolicyDecision(False, f"could not parse command: {exc}")
-
-        if not parts:
-            return PolicyDecision(False, "cmd parsed to no arguments")
+        parts, parse_error = parse_command(cmd)
+        if parts is None:
+            if parse_error == "cmd parsed to no arguments":
+                return PolicyDecision(False, parse_error)
+            return PolicyDecision(False, f"could not parse command: {parse_error}")
 
         command_decision = self._check_test_command_shape(parts)
         if not command_decision.allowed:

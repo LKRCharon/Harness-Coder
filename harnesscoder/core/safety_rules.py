@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 
 
 SENSITIVE_FILE_NAMES = {
@@ -41,3 +42,13 @@ def is_sensitive_workspace_path(path: Path, cwd: Path) -> bool:
         if part in SENSITIVE_FILE_NAMES or part.startswith(".env."):
             return True
     return path.name.endswith(SENSITIVE_FILE_SUFFIXES)
+
+
+def parse_command(cmd: str) -> tuple[list[str] | None, str | None]:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError as exc:
+        return None, str(exc)
+    if not parts:
+        return None, "cmd parsed to no arguments"
+    return parts, None

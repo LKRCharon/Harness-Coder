@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from harnesscoder.core.hc_bench_oracle import hc_bench_oracle_action
 from harnesscoder.core.context import build_context_pack
@@ -637,8 +639,13 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertEqual(action.tool_args, {"cmd": "python -m unittest"})
 
     def test_system_prompt_lists_every_runtime_tool(self) -> None:
-        for tool_name in MODEL_TOOL_NAMES:
-            self.assertIn(tool_name, MODEL_SYSTEM_PROMPT)
+        from harnesscoder.core.tools import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ToolRegistry(Path(tmp))
+            prompt_text = registry.get_prompt_text()
+            for tool_name in MODEL_TOOL_NAMES:
+                self.assertIn(tool_name, prompt_text)
 
     def test_system_prompt_tells_models_when_to_finish(self) -> None:
         prompt = " ".join(MODEL_SYSTEM_PROMPT.split())
@@ -649,9 +656,9 @@ class ModelAdapterNormalizationTests(unittest.TestCase):
         self.assertIn("remaining budget is low", prompt)
 
     def test_system_prompt_describes_durable_note_tools(self) -> None:
-        prompt = " ".join(MODEL_SYSTEM_PROMPT.split())
-        self.assertIn("create_note", prompt)
-        self.assertIn("search_notes", prompt)
+        from harnesscoder.core.models import MODEL_TOOL_GUIDANCE
+
+        prompt = " ".join(MODEL_TOOL_GUIDANCE.split())
         self.assertIn("durable task state", prompt)
         self.assertIn("blockers, actions, task_state, decisions, conclusions", prompt)
 

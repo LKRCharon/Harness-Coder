@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import json
-import shlex
 import shutil
 import subprocess
 import sys
@@ -21,7 +20,9 @@ from harnesscoder.core.safety_rules import (
     is_python_executable,
     is_sensitive_workspace_path,
     iter_sensitive_file_globs,
+    parse_command,
 )
+from harnesscoder.core.tool_schema import ToolSchema, harness_tool
 
 
 DEFAULT_TEST_COMMAND = "python -m unittest discover"
@@ -230,6 +231,17 @@ class ToolRegistry:
             "create_note": self.create_note,
             "search_notes": self.search_notes,
         }
+        self._schemas: dict[str, ToolSchema] = {}
+        for name, fn in self._tools.items():
+            schema = getattr(fn, "__tool_schema__", None)
+            if schema is not None:
+                self._schemas[name] = schema
+
+    def get_schemas(self) -> dict[str, ToolSchema]:
+        return dict(self._schemas)
+
+    def get_prompt_text(self) -> str:
+        return "\n".join(schema.to_prompt_text() for schema in self._schemas.values())
 
     @property
     def command_executor_backend(self) -> str:
@@ -264,6 +276,12 @@ class ToolRegistry:
                 error=f"tool crashed: {type(exc).__name__}: {exc}",
             )
 
+    @harness_tool(
+        description="Read a file from the workspace with optional offset and limit.",
+        path=("string", "Relative path to the file.", True),
+        offset=("int", "Line number to start reading from.", False, 0),
+        limit=("int", "Maximum number of lines to read.", False, 200),
+    )
     def read_file(
         self,
         call_id: str,
@@ -308,6 +326,11 @@ class ToolRegistry:
             },
         )
 
+    @harness_tool(
+        description="Search the workspace for a literal string using ripgrep.",
+        query=("string", "Literal text to search for.", True),
+        path=("string", "Directory to search in, relative to workspace root.", False, "."),
+    )
     def search_code(
         self,
         call_id: str,
@@ -392,6 +415,12 @@ class ToolRegistry:
 
         return self._search_code_python(call_id=call_id, query=query, target=target)
 
+    @harness_tool(
+        description="Get a symbol-level map of the repository.",
+        query=("string | null", "Optional filter to narrow the map.", False, None),
+        max_tokens=("int", "Maximum tokens for the map output.", False, 1200),
+        refresh=("boolean", "Force refresh the cached map.", False, False),
+    )
     def repo_map(
         self,
         call_id: str,
@@ -422,6 +451,11 @@ class ToolRegistry:
             metadata=result.metadata,
         )
 
+    @harness_tool(
+        description="Run a shell command in the workspace.",
+        cmd=("string", "The command to execute.", True),
+        timeout=("int", "Timeout in seconds.", False, 30),
+    )
     def run_command(
         self,
         call_id: str,
@@ -430,12 +464,11 @@ class ToolRegistry:
     ) -> ToolResult:
         tool_name = "run_command"
         timeout = max(1, min(int(timeout), MAX_COMMAND_TIMEOUT))
-        try:
-            parts = shlex.split(cmd)
-        except ValueError as exc:
-            return ToolResult(call_id, tool_name, False, "", f"could not parse cmd: {exc}")
-        if not parts:
-            return ToolResult(call_id, tool_name, False, "", "cmd parsed to no arguments")
+        parts, parse_error = parse_command(cmd)
+        if parts is None:
+            if parse_error == "cmd parsed to no arguments":
+                return ToolResult(call_id, tool_name, False, "", parse_error)
+            return ToolResult(call_id, tool_name, False, "", f"could not parse cmd: {parse_error}")
 
         return self._run_subprocess(
             call_id=call_id,
@@ -445,6 +478,12 @@ class ToolRegistry:
             timeout=timeout,
         )
 
+    @harness_tool(
+        description="Replace an exact string in a file with a new string.",
+        path=("string", "Relative path to the file.", True),
+        old=("string", "Exact string to find and replace (must match once).", True),
+        new=("string", "Replacement string.", True),
+    )
     def edit_file(
         self,
         call_id: str,
@@ -552,6 +591,12 @@ class ToolRegistry:
             metadata=metadata,
         )
 
+    @harness_tool(
+        description="Write content to a new file in the workspace.",
+        path=("string", "Relative path to the file.", True),
+        content=("string", "Content to write.", True),
+        overwrite=("boolean", "Allow overwriting an existing file.", False, False),
+    )
     def write_file(
         self,
         call_id: str,
@@ -666,6 +711,13 @@ class ToolRegistry:
             },
         )
 
+    @harness_tool(
+        description="Create a durable note for task-scoped facts.",
+        title=("string", "Note title.", True),
+        content=("string", "Note content.", True),
+        note_type=("string", "Note category: general, blocker, decision, fact.", False, "general"),
+        tags=("string[]", "Optional tags for filtering.", False, []),
+    )
     def create_note(
         self,
         call_id: str,
@@ -700,6 +752,12 @@ class ToolRegistry:
             },
         )
 
+    @harness_tool(
+        description="Search durable notes by query text.",
+        query=("string", "Search query.", True),
+        limit=("int", "Maximum results to return.", False, 5),
+        note_type=("string | null", "Filter by note type.", False, None),
+    )
     def search_notes(
         self,
         call_id: str,
@@ -732,6 +790,11 @@ class ToolRegistry:
             },
         )
 
+    @harness_tool(
+        description="Run tests using the specified or default test command.",
+        cmd=("string | null", "Test command. Defaults to python -m unittest discover.", False, None),
+        timeout=("int", "Timeout in seconds.", False, 60),
+    )
     def run_tests(
         self,
         call_id: str,
@@ -746,18 +809,17 @@ class ToolRegistry:
             parts = [sys.executable, "-m", "unittest", "discover"]
         elif isinstance(cmd, str):
             command = cmd
-            try:
-                parts = shlex.split(cmd)
-            except ValueError as exc:
+            parts, parse_error = parse_command(cmd)
+            if parts is None:
+                if parse_error == "cmd parsed to no arguments":
+                    return ToolResult(call_id, tool_name, False, "", parse_error)
                 return ToolResult(
                     call_id,
                     tool_name,
                     False,
                     "",
-                    f"could not parse cmd: {exc}",
+                    f"could not parse cmd: {parse_error}",
                 )
-            if not parts:
-                return ToolResult(call_id, tool_name, False, "", "cmd parsed to no arguments")
             parts = normalize_python_command(parts)
         else:
             return ToolResult(
@@ -911,9 +973,82 @@ def safe_subprocess_env(extra_env: dict[str, str] | None = None) -> dict[str, st
     return env
 
 
+BUBBLEWRAP_EXECUTABLE = "bwrap"
+
+
+class BubblewrapExecutor:
+    backend = "bubblewrap"
+    sandboxed = True
+
+    def __init__(self, workspace_root: Path) -> None:
+        self.workspace_root = workspace_root.resolve()
+
+    def run(
+        self,
+        *,
+        parts: list[str],
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int,
+    ) -> CommandExecutionResult:
+        bwrap_args = self._build_bwrap_args(cwd)
+        full_cmd = ["bwrap", *bwrap_args, "--", *parts]
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                full_cmd,
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+                env=env,
+            )
+        except FileNotFoundError:
+            return CommandExecutionResult(
+                returncode=127,
+                stdout="",
+                stderr="bwrap: command not found",
+                duration_seconds=time.monotonic() - started,
+                backend=self.backend,
+                sandboxed=self.sandboxed,
+            )
+
+        return CommandExecutionResult(
+            returncode=completed.returncode,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+            duration_seconds=time.monotonic() - started,
+            backend=self.backend,
+            sandboxed=self.sandboxed,
+        )
+
+    def _build_bwrap_args(self, cwd: Path) -> list[str]:
+        workspace = str(self.workspace_root)
+        args: list[str] = [
+            "--ro-bind", "/", "/",
+            "--bind", workspace, workspace,
+            "--bind", "/tmp", "/tmp",
+            "--dev", "/dev",
+            "--proc", "/proc",
+            "--unshare-net",
+            "--die-with-parent",
+            "--new-session",
+        ]
+        for target in _protected_sensitive_paths(self.workspace_root):
+            _append_bwrap_mask(args, target)
+        return args
+
+
+def _has_bubblewrap() -> bool:
+    return shutil.which(BUBBLEWRAP_EXECUTABLE) is not None
+
+
 def build_command_executor(cwd: Path) -> CommandExecutor:
     if sys.platform == "darwin" and Path(MACOS_SANDBOX_EXECUTABLE).is_file():
         return MacOSSeatbeltExecutor(cwd)
+    if sys.platform == "linux" and _has_bubblewrap():
+        return BubblewrapExecutor(cwd)
     return LocalCommandExecutor()
 
 
@@ -988,12 +1123,44 @@ def _protected_sensitive_paths(workspace_root: Path) -> list[Path]:
     protected: list[Path] = []
     for relative in MACOS_SANDBOX_PROTECTED_PATHS:
         protected.append(workspace_root / relative)
-    for pattern in MACOS_SANDBOX_SENSITIVE_FILE_PATTERNS:
-        protected.extend(candidate for candidate in workspace_root.glob(pattern) if candidate.exists())
+    protected.extend(_iter_sensitive_workspace_paths(workspace_root))
     home = Path.home()
     for relative in MACOS_SANDBOX_HOME_PROTECTED_PATHS:
         protected.append(home / relative)
     return _dedupe_existing_paths(protected)
+
+
+def _iter_sensitive_workspace_paths(workspace_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    pending = [workspace_root]
+    while pending:
+        directory = pending.pop()
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            continue
+        for candidate in children:
+            if candidate.is_symlink():
+                continue
+            if candidate.is_dir():
+                if candidate.name in IGNORED_SEARCH_DIRS:
+                    continue
+                pending.append(candidate)
+                continue
+            try:
+                if candidate.is_file() and is_sensitive_workspace_path(candidate, workspace_root):
+                    paths.append(candidate)
+            except OSError:
+                continue
+    return paths
+
+
+def _append_bwrap_mask(args: list[str], target: Path) -> None:
+    if target.is_dir():
+        args.extend(["--tmpfs", str(target)])
+        return
+    if target.is_file():
+        args.extend(["--ro-bind", "/dev/null", str(target)])
 
 
 def _sandbox_deny_clause(path: Path) -> str:
@@ -1047,6 +1214,8 @@ def _is_sandbox_error(
         "sandbox-exec:",
         "sandbox violation",
         "deny(",
+        "bwrap:",
+        "bubblewrap",
     )
     if any(marker in normalized for marker in markers):
         return True

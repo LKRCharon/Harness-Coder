@@ -23,16 +23,19 @@ from harnesscoder.core.safety_rules import (
     is_python_executable,
     is_sensitive_workspace_path,
     iter_sensitive_file_globs,
+    parse_command,
 )
 from harnesscoder.core.session import SessionStore
 from harnesscoder.core.state import AgentState, ModelAction
 from harnesscoder.core.artifacts import store_large_observation
 from harnesscoder.core.tools import (
+    BubblewrapExecutor,
     CommandExecutionResult,
     LocalCommandExecutor,
     MacOSSeatbeltExecutor,
     ToolRegistry,
     ToolResult,
+    _has_bubblewrap,
     _is_sandbox_error,
     _protected_sensitive_paths,
     build_command_executor,
@@ -189,7 +192,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIsInstance(executor, LocalCommandExecutor)
 
     def test_build_command_executor_uses_local_executor_off_macos(self) -> None:
-        with mock.patch("harnesscoder.core.tools.sys.platform", "linux"):
+        with mock.patch("harnesscoder.core.tools.sys.platform", "linux"), mock.patch(
+            "harnesscoder.core.tools._has_bubblewrap",
+            return_value=False,
+        ):
             executor = build_command_executor(Path.cwd())
         self.assertIsInstance(executor, LocalCommandExecutor)
 
@@ -200,6 +206,74 @@ class ToolRegistryTests(unittest.TestCase):
         ):
             executor = build_command_executor(Path.cwd())
         self.assertIsInstance(executor, MacOSSeatbeltExecutor)
+
+    def test_build_command_executor_uses_bubblewrap_on_linux(self) -> None:
+        with mock.patch("harnesscoder.core.tools.sys.platform", "linux"), mock.patch(
+            "harnesscoder.core.tools._has_bubblewrap",
+            return_value=True,
+        ):
+            executor = build_command_executor(Path.cwd())
+        self.assertIsInstance(executor, BubblewrapExecutor)
+
+    def test_build_command_executor_falls_back_without_bwrap(self) -> None:
+        with mock.patch("harnesscoder.core.tools.sys.platform", "linux"), mock.patch(
+            "harnesscoder.core.tools._has_bubblewrap",
+            return_value=False,
+        ):
+            executor = build_command_executor(Path.cwd())
+        self.assertIsInstance(executor, LocalCommandExecutor)
+
+    def test_bubblewrap_builds_correct_bwrap_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executor = BubblewrapExecutor(root)
+            args = executor._build_bwrap_args(root)
+            self.assertIn("--unshare-net", args)
+            self.assertIn("--die-with-parent", args)
+            self.assertIn("--ro-bind", args)
+            self.assertIn("/", args)
+            workspace_idx = args.index("--bind")
+            self.assertEqual(args[workspace_idx + 1], str(root.resolve()))
+
+    def test_bubblewrap_masks_sensitive_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+            (root / "keys").mkdir()
+            (root / "keys" / "private.pem").write_text("secret\n", encoding="utf-8")
+            executor = BubblewrapExecutor(root)
+            args = executor._build_bwrap_args(root)
+
+            ro_null_targets = []
+            tmpfs_targets = []
+            i = 0
+            while i < len(args):
+                if args[i] == "--ro-bind" and i + 2 < len(args):
+                    if args[i + 1] == "/dev/null":
+                        ro_null_targets.append(args[i + 2])
+                    i += 3
+                    continue
+                if args[i] == "--tmpfs" and i + 1 < len(args):
+                    tmpfs_targets.append(args[i + 1])
+                    i += 2
+                    continue
+                i += 1
+
+            self.assertIn(str((root / ".env").resolve()), ro_null_targets)
+            self.assertIn(str((root / "keys" / "private.pem").resolve()), ro_null_targets)
+
+            home = Path.home()
+            for protected in (".ssh", ".aws", ".gnupg", ".npmrc", ".pypirc"):
+                target = home / protected
+                if target.exists() and target.is_dir():
+                    self.assertIn(str(target.resolve()), tmpfs_targets)
+                if target.exists() and target.is_file():
+                    self.assertIn(str(target.resolve()), ro_null_targets)
+
+    def test_sandbox_error_detects_bwrap_markers(self) -> None:
+        self.assertTrue(_is_sandbox_error(True, "bwrap: execvp: Permission denied"))
+        self.assertTrue(_is_sandbox_error(True, "bubblewrap setup failed"))
+        self.assertFalse(_is_sandbox_error(False, "bwrap: execvp: Permission denied"))
 
     def test_normalize_python_command_only_rewrites_bare_python(self) -> None:
         self.assertEqual(
@@ -236,6 +310,19 @@ class ToolRegistryTests(unittest.TestCase):
             self.assertTrue(is_sensitive_workspace_path(root / ".env", root))
             self.assertTrue(is_sensitive_workspace_path(root / "keys" / "private.pem", root))
             self.assertFalse(is_sensitive_workspace_path(root / "src" / "app.py", root))
+
+    def test_parse_command_reports_success_parse_errors_and_empty_input(self) -> None:
+        parts, error = parse_command("python -m unittest discover")
+        self.assertEqual(parts, ["python", "-m", "unittest", "discover"])
+        self.assertIsNone(error)
+
+        parts, error = parse_command("'unterminated")
+        self.assertIsNone(parts)
+        self.assertIsInstance(error, str)
+
+        parts, error = parse_command("")
+        self.assertIsNone(parts)
+        self.assertEqual(error, "cmd parsed to no arguments")
 
     def test_repo_map_extracts_python_symbols_and_omits_local_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
