@@ -1310,3 +1310,33 @@ Keep that report as instability evidence, but do not use it to claim
 `no_repomap`, `no_memory`, or `no_context_compaction` are worse. A follow-up
 release should split transient provider failures from action-parse failures and
 make retry/backoff visible in trace.
+
+## 1.5.4 Milestone
+
+### 52. Read-only Investigator Delegation
+
+Problem:
+Large repository tasks often need scoped investigation before the main agent can
+make a safe decision. Letting the main agent perform every read itself increases
+context pressure and repeated tool calls, while unrestricted subagents would
+weaken HC's policy and trace story.
+
+Decision:
+Add `delegate_readonly` as a bounded investigator tool. The parent run requests
+a scoped investigation, then HC creates a child run with a read-only policy:
+`read_file`, `search_code`, `repo_map`, and `search_notes`. The child run has
+its own trace, budget, model metadata, policy decisions, and tool observations.
+The parent trace records `delegation_started`, `delegation_completed`, or
+`delegation_failed`, and the parent receives a structured evidence summary with
+paths, line ranges, confidence, and open questions.
+
+The investigator has a dedicated lightweight system prompt and can use a
+separate model profile through `--investigator-model-profile` or
+`HARNESSCODER_INVESTIGATOR_MODEL_PROFILE`. The built-in `mimo-v2.5` profile alias
+uses the OpenAI-compatible Chat Completions path; API keys still come from
+environment variables such as `api_key_env`, not committed config.
+
+Interview angle:
+This is not generic multi-agent orchestration. It is policy-gated read-only
+delegation with replayable evidence. The main agent keeps write authority and
+decision responsibility, while the investigator supplies auditable context.

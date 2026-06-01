@@ -373,6 +373,7 @@ def _run_in_background(app: FastAPI, active_run: ActiveRun) -> None:
         session_context = session_store.build_context(active_run.session_id)
         runner = AgentRunner(
             model=_build_model_for_profile(active_run.model_profile, app.state.workspace_root),
+            readonly_investigator_model=_build_investigator_model(app.state.workspace_root),
             cwd=app.state.workspace_root,
             trace_root=app.state.trace_root,
             max_iterations=active_run.max_iterations,
@@ -421,6 +422,13 @@ def _build_model_for_profile(model_profile: str, workspace_root: Path) -> Any:
         cwd=str(workspace_root),
     )
     return resolve_model_profile(profile_name, args, workspace_root).build()
+
+
+def _build_investigator_model(workspace_root: Path) -> Any | None:
+    profile_name = os.environ.get("HARNESSCODER_INVESTIGATOR_MODEL_PROFILE")
+    if not profile_name:
+        return None
+    return _build_model_for_profile(profile_name, workspace_root)
 
 
 def _store_active_run(app: FastAPI, active_run: ActiveRun) -> None:

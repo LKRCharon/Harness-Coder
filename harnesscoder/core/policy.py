@@ -22,6 +22,10 @@ from harnesscoder.core.safety_rules import (
 )
 from harnesscoder.core.tool_schema import ToolSchema
 
+READONLY_DELEGATE_TOOLS = frozenset({"read_file", "search_code", "repo_map", "search_notes"})
+DEFAULT_READONLY_DELEGATE_MAX_ITERATIONS = 3
+MAX_READONLY_DELEGATE_ITERATIONS = 6
+
 
 @dataclass(slots=True)
 class PolicyDecision:
@@ -118,6 +122,9 @@ class ToolPolicy:
 
         if tool_name == "search_notes":
             return self._check_search_notes(tool_args)
+
+        if tool_name == "delegate_readonly":
+            return self._check_delegate_readonly(tool_args)
 
         return PolicyDecision(False, f"unknown tool: {tool_name}")
 
@@ -312,6 +319,45 @@ class ToolPolicy:
             return PolicyDecision(False, "note_type is not supported")
 
         return PolicyDecision(True, "note search is read-only and allowed")
+
+    def _check_delegate_readonly(self, tool_args: dict[str, Any]) -> PolicyDecision:
+        task = tool_args.get("task")
+        if not isinstance(task, str) or not task.strip():
+            return PolicyDecision(False, "delegate task must be a non-empty string")
+        if len(" ".join(task.split())) > 2000:
+            return PolicyDecision(False, "delegate task is too long")
+
+        scope = tool_args.get("scope")
+        if scope is not None and not isinstance(scope, str):
+            return PolicyDecision(False, "delegate scope must be a string or null")
+
+        max_iterations = tool_args.get("max_iterations", DEFAULT_READONLY_DELEGATE_MAX_ITERATIONS)
+        if (
+            not isinstance(max_iterations, int)
+            or isinstance(max_iterations, bool)
+            or max_iterations <= 0
+        ):
+            return PolicyDecision(False, "delegate max_iterations must be a positive integer")
+        if max_iterations > MAX_READONLY_DELEGATE_ITERATIONS:
+            return PolicyDecision(False, "delegate max_iterations exceeds policy limit")
+
+        allowed_tools = tool_args.get("allowed_tools")
+        if allowed_tools is None:
+            return PolicyDecision(True, "read-only delegation allowed")
+        if not isinstance(allowed_tools, list) or not all(
+            isinstance(item, str) for item in allowed_tools
+        ):
+            return PolicyDecision(False, "delegate allowed_tools must be a list of strings")
+        requested = set(allowed_tools)
+        if not requested:
+            return PolicyDecision(False, "delegate allowed_tools cannot be empty")
+        unsafe = requested - READONLY_DELEGATE_TOOLS
+        if unsafe:
+            return PolicyDecision(
+                False,
+                "delegate allowed_tools must stay read-only: " + ", ".join(sorted(unsafe)),
+            )
+        return PolicyDecision(True, "read-only delegation allowed")
 
     def _check_test_command_shape(self, parts: list[str]) -> PolicyDecision:
         head = Path(parts[0]).name

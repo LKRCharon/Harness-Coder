@@ -66,6 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a single configured model profile.",
     )
     parser.add_argument(
+        "--investigator-model-profile",
+        default=os.environ.get("HARNESSCODER_INVESTIGATOR_MODEL_PROFILE"),
+        help=(
+            "Optional model profile for read-only investigator delegations, "
+            "for example mimo-v2.5."
+        ),
+    )
+    parser.add_argument(
         "--model-profiles",
         help="Comma-separated profiles for eval matrix mode, for example scripted,gpt55.",
     )
@@ -188,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.resume:
         runner = AgentRunner(
             model=build_model(args),
+            readonly_investigator_model=build_investigator_model(args, cwd),
             cwd=cwd,
             trace_root=Path(args.trace_root),
             max_iterations=args.max_iterations,
@@ -325,6 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     runner = AgentRunner(
         model=build_model(args),
+        readonly_investigator_model=build_investigator_model(args, cwd),
         cwd=cwd,
         trace_root=Path(args.trace_root),
         max_iterations=args.max_iterations,
@@ -430,6 +440,16 @@ def build_model(args: argparse.Namespace) -> ModelAdapter:
     )
 
 
+def build_investigator_model(
+    args: argparse.Namespace,
+    cwd: Path,
+) -> ModelAdapter | None:
+    profile_name = getattr(args, "investigator_model_profile", None)
+    if not profile_name:
+        return None
+    return resolve_model_profile(profile_name, args, cwd).build()
+
+
 def build_eval_profiles(
     args: argparse.Namespace,
     cwd: Path,
@@ -474,12 +494,20 @@ def resolve_model_profile(
             base_url=args.openai_base_url,
             api_key_env=args.openai_api_key_env,
         )
+    if name in {"mimo", "mimo-v2.5", "mimo-v2_5"}:
+        return ModelProfile(
+            name=name,
+            provider="openai-chat",
+            model="mimo-v2.5",
+            base_url=args.openai_base_url,
+            api_key_env=args.openai_api_key_env,
+        )
 
     config_path = resolve_model_config_path(args.model_config, cwd)
     raise SystemExit(
         f"model profile {name!r} was not found in {config_path}. "
         "Use --model-config or one of the built-in profiles: scripted, "
-        "hc-bench-oracle, openai-codex, openai-chat."
+        "hc-bench-oracle, openai-codex, openai-chat, mimo-v2.5."
     )
 
 

@@ -23,6 +23,7 @@ MODEL_TOOL_NAMES = (
     "run_command",
     "create_note",
     "search_notes",
+    "delegate_readonly",
 )
 TOOL_NAME_ALIASES = {
     "read": "read_file",
@@ -55,6 +56,10 @@ TOOL_NAME_ALIASES = {
     "command": "run_command",
     "shell": "run_command",
     "bash": "run_command",
+    "delegate": "delegate_readonly",
+    "delegate_readonly": "delegate_readonly",
+    "readonly_delegate": "delegate_readonly",
+    "investigate": "delegate_readonly",
 }
 TOOL_ARG_KEYS = {
     "read_file": ("path", "offset", "limit"),
@@ -64,6 +69,7 @@ TOOL_ARG_KEYS = {
     "edit_file": ("path", "old", "new"),
     "run_tests": ("cmd", "command", "timeout"),
     "run_command": ("cmd", "command", "timeout"),
+    "delegate_readonly": ("task", "scope", "max_iterations", "allowed_tools"),
 }
 REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 REASONING_EFFORT_CHOICES = ("none", *REASONING_EFFORTS)
@@ -355,7 +361,7 @@ Allowed tool action:
 {
   "kind": "tool",
   "rationale": "why this tool call is the next useful step",
-  "tool_name": "read_file | search_code | repo_map | write_file | edit_file | run_tests | run_command",
+  "tool_name": "read_file | search_code | repo_map | write_file | edit_file | run_tests | run_command | create_note | search_notes | delegate_readonly",
   "tool_args": {},
   "thought_summary": "brief non-sensitive reasoning summary",
   "current_step_id": "step identifier from the current plan",
@@ -395,7 +401,38 @@ inspection and other policy-allowed commands. The policy layer may deny unsafe
 commands. Use create_note only for durable task state that should survive the
 current run: blockers, actions, task_state, decisions, conclusions, or verified
 facts. Use search_notes when continuing long-running codebase work and prior
-blockers, task state, decisions, or verified facts may affect the next action."""
+blockers, task state, decisions, or verified facts may affect the next action.
+Use delegate_readonly for bounded investigation that should gather evidence
+without modifying the workspace; summarize and verify the returned evidence
+before using it for edits or final claims."""
+
+READONLY_INVESTIGATOR_SYSTEM_PROMPT = """You are the read-only investigator subagent inside HarnessCoder.
+Your job is to gather scoped evidence for the parent agent without modifying the
+workspace.
+
+Return exactly one JSON object and no Markdown.
+
+Allowed tool action:
+{
+  "kind": "tool",
+  "rationale": "why this read-only tool call is the next useful evidence step",
+  "tool_name": "read_file | search_code | repo_map | search_notes",
+  "tool_args": {},
+  "thought_summary": "brief non-sensitive evidence summary",
+  "expected_observation": "what evidence this tool call should produce"
+}
+
+Allowed finish action:
+{
+  "kind": "finish",
+  "rationale": "why enough evidence has been gathered",
+  "content": "concise evidence summary with file paths, line numbers, uncertainty, and open questions"
+}
+
+Use only tools listed in available_tools. Do not request edits, tests, shell
+commands, network access, note creation, or workspace mutations. Prefer
+search_code and repo_map before reading large files. Finish when the evidence is
+enough for the parent agent to decide the next step."""
 
 
 def _normalize_openai_base_url(base_url: str) -> str:

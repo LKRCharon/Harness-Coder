@@ -5,8 +5,9 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from harnesscoder.cli import main
+from harnesscoder.cli import main, resolve_model_profile
 from harnesscoder.eval_runner import (
     DEFAULT_CONTEXT_ABLATIONS,
     EvalMatrixProfileResult,
@@ -104,6 +105,22 @@ class EvalMatrixTests(unittest.TestCase):
         self.assertEqual(parse_profile_names("scripted,gpt"), ["scripted", "gpt"])
         with self.assertRaises(ValueError):
             parse_profile_names("scripted, scripted")
+
+    def test_builtin_mimo_profile_uses_chat_provider(self) -> None:
+        args = SimpleNamespace(
+            model_config="missing-models.toml",
+            openai_model=None,
+            openai_base_url="https://mimo.example/v1",
+            openai_api_key_env="MIMO_API_KEY",
+            reasoning_effort=None,
+        )
+
+        profile = resolve_model_profile("mimo-v2.5", args, ROOT)
+
+        self.assertEqual(profile.provider, "openai-chat")
+        self.assertEqual(profile.model, "mimo-v2.5")
+        self.assertEqual(profile.base_url, "https://mimo.example/v1")
+        self.assertEqual(profile.api_key_env, "MIMO_API_KEY")
 
     def test_eval_matrix_report_compares_profiles(self) -> None:
         matrix = run_eval_matrix(

@@ -794,6 +794,39 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(allowed_search.allowed, allowed_search.reason)
         self.assertFalse(bad_limit.allowed)
 
+    def test_delegate_readonly_policy_allows_only_read_tools(self) -> None:
+        policy = ToolPolicy()
+        root = Path.cwd()
+
+        allowed = policy.check(
+            "delegate_readonly",
+            {
+                "task": "Inspect README evidence.",
+                "scope": "README.md",
+                "max_iterations": 3,
+                "allowed_tools": ["read_file", "search_code"],
+            },
+            root,
+        )
+        denied_tool = policy.check(
+            "delegate_readonly",
+            {
+                "task": "Try to modify files.",
+                "allowed_tools": ["read_file", "write_file"],
+            },
+            root,
+        )
+        denied_budget = policy.check(
+            "delegate_readonly",
+            {"task": "Spend too long.", "max_iterations": 99},
+            root,
+        )
+
+        self.assertTrue(allowed.allowed, allowed.reason)
+        self.assertFalse(denied_tool.allowed)
+        self.assertIn("read-only", denied_tool.reason)
+        self.assertFalse(denied_budget.allowed)
+
 
 class ReplayTests(unittest.TestCase):
     def test_summarize_trace_counts_tools_and_state(self) -> None:
@@ -1135,6 +1168,62 @@ class ContextMemoryRunnerTests(unittest.TestCase):
         self.assertEqual(summary["metrics"]["note_retrieved_count"], 1)
         self.assertEqual(note_created["note_type"], "blocker")
         self.assertEqual(note_retrieved["note_count"], 1)
+
+    def test_runner_executes_readonly_delegation_with_child_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n\nEvidence line.\n", encoding="utf-8")
+            runner = AgentRunner(
+                model=_DelegationModel(),
+                readonly_investigator_model=_InvestigatorCaptureModel(),
+                cwd=root,
+                trace_root=root / ".harnesscoder" / "runs",
+                max_iterations=3,
+            )
+
+            result = runner.run("Delegate README investigation.")
+            summary = summarize_trace(result.trace_path)
+            records = [
+                json.loads(line)
+                for line in result.trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            tool_result = next(
+                record["result"]
+                for record in records
+                if record.get("type") == "tool_result"
+                and record.get("result", {}).get("tool_name") == "delegate_readonly"
+            )
+            delegation = json.loads(tool_result["output"])
+            child_trace = Path(tool_result["metadata"]["delegation_trace_path"])
+            child_trace_exists = child_trace.is_file()
+            child_summary = summarize_trace(child_trace)
+            child_records = [
+                json.loads(line)
+                for line in child_trace.read_text(encoding="utf-8").splitlines()
+            ]
+            child_context = next(
+                record
+                for record in child_records
+                if record.get("type") == "context_packed"
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(summary["metrics"]["delegation_started_count"], 1)
+        self.assertEqual(summary["metrics"]["delegation_completed_count"], 1)
+        self.assertEqual(summary["tool_counts"]["delegate_readonly"], 1)
+        self.assertTrue(tool_result["ok"])
+        self.assertEqual(delegation["confidence"], "medium")
+        self.assertIn("Evidence line", delegation["summary"])
+        self.assertEqual(delegation["evidence"][0]["path"], "README.md")
+        self.assertTrue(child_trace_exists)
+        self.assertEqual(child_summary["tool_counts"], {"read_file": 1})
+        self.assertEqual(
+            set(child_context["available_tools"]),
+            {"read_file", "search_code", "repo_map", "search_notes"},
+        )
+        self.assertIn("read-only investigator subagent", _InvestigatorCaptureModel.last_system)
+        self.assertIn("Do not request edits", _InvestigatorCaptureModel.last_system)
+        self.assertIn("Read-only investigator subtask.", _InvestigatorCaptureModel.last_user)
 
     def test_runner_auto_injects_relevant_notes_and_scores_context_quality(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1581,6 +1670,68 @@ class _CreateSearchNoteModel:
             kind="finish",
             rationale="The note was created and retrieved.",
             content="done",
+        )
+
+
+class _DelegationModel:
+    name = "delegation-model"
+
+    def next_action(self, state: AgentState, _context=None) -> ModelAction:
+        if state.task.startswith("Read-only investigator subtask."):
+            if state.latest_observation_for("read_file") is None:
+                return ModelAction(
+                    kind="tool",
+                    rationale="Read scoped evidence.",
+                    tool_name="read_file",
+                    tool_args={"path": "README.md", "offset": 0, "limit": 20},
+                )
+            readme = state.latest_observation_for("read_file")
+            return ModelAction(
+                kind="finish",
+                rationale="Read-only evidence gathered.",
+                content=f"README evidence: {readme.output if readme else ''}",
+            )
+
+        if state.latest_observation_for("delegate_readonly") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Ask a read-only investigator for README evidence.",
+                tool_name="delegate_readonly",
+                tool_args={
+                    "task": "Inspect README and summarize evidence.",
+                    "scope": "README.md",
+                    "max_iterations": 2,
+                },
+            )
+        return ModelAction(
+            kind="finish",
+            rationale="Delegation returned evidence.",
+            content="done",
+        )
+
+
+class _InvestigatorCaptureModel:
+    name = "investigator-capture"
+    last_system = ""
+    last_user = ""
+
+    def next_action(self, state: AgentState, context=None) -> ModelAction:
+        if context is not None:
+            messages = context.to_model_input()
+            self.__class__.last_system = messages[0]["content"]
+            self.__class__.last_user = messages[1]["content"]
+        if state.latest_observation_for("read_file") is None:
+            return ModelAction(
+                kind="tool",
+                rationale="Read scoped evidence.",
+                tool_name="read_file",
+                tool_args={"path": "README.md", "offset": 0, "limit": 20},
+            )
+        readme = state.latest_observation_for("read_file")
+        return ModelAction(
+            kind="finish",
+            rationale="Read-only evidence gathered.",
+            content=f"README evidence: {readme.output if readme else ''}",
         )
 
 

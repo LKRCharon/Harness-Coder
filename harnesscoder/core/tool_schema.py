@@ -14,6 +14,9 @@ _TYPE_VALIDATORS: dict[str, Callable[[Any], bool]] = {
     "string[]": lambda v: isinstance(v, list) and all(isinstance(i, str) for i in v),
     "string | null": lambda v: v is None or isinstance(v, str),
     "int | null": lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool)),
+    "string[] | null": lambda v: v is None or (
+        isinstance(v, list) and all(isinstance(i, str) for i in v)
+    ),
 }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -20,11 +21,18 @@ from harnesscoder.core.models import (
     MODEL_SYSTEM_PROMPT,
     MODEL_TOOL_GUIDANCE,
     MODEL_TOOL_NAMES,
+    READONLY_INVESTIGATOR_SYSTEM_PROMPT,
     ModelAdapter,
     ModelAdapterError,
 )
 from harnesscoder.core.notes import MAX_NOTE_QUERY_CHARS, NoteStore
-from harnesscoder.core.policy import PolicyDecision, ToolPolicy
+from harnesscoder.core.policy import (
+    DEFAULT_READONLY_DELEGATE_MAX_ITERATIONS,
+    MAX_READONLY_DELEGATE_ITERATIONS,
+    READONLY_DELEGATE_TOOLS,
+    PolicyDecision,
+    ToolPolicy,
+)
 from harnesscoder.core.prompt import ContextMode, assemble_context
 from harnesscoder.core.repo_map import RepoMapCache
 from harnesscoder.core.state import AgentPlan, AgentState, ModelAction, PlanStep, ToolObservation
@@ -37,6 +45,7 @@ MODEL_RETRY_MAX_RETRIES = 4
 MODEL_RETRY_BASE_DELAY_SECONDS = 1.0
 MODEL_RETRY_MAX_DELAY_SECONDS = 30.0
 NotesMode = Literal["none", "auto"]
+DELEGATE_TOOL_NAME = "delegate_readonly"
 
 
 @dataclass(slots=True)
@@ -45,6 +54,39 @@ class RunResult:
     status: str
     final_answer: str
     trace_path: Path
+
+
+@dataclass(slots=True)
+class ReadOnlyInvestigatorModel:
+    adapter: ModelAdapter
+
+    @property
+    def name(self) -> str:
+        adapter_name = getattr(self.adapter, "name", type(self.adapter).__name__)
+        return f"readonly-investigator:{adapter_name}"
+
+    def next_action(
+        self,
+        state: AgentState,
+        context: object = None,
+    ) -> ModelAction:
+        if context is not None and hasattr(context, "system_instructions"):
+            context = _replace_context_system(
+                context,
+                READONLY_INVESTIGATOR_SYSTEM_PROMPT,
+            )
+        return self.adapter.next_action(state, context)  # type: ignore[arg-type]
+
+    def model_metadata(self) -> dict[str, Any]:
+        metadata_provider = getattr(self.adapter, "model_metadata", None)
+        if callable(metadata_provider):
+            metadata = dict(metadata_provider())
+        else:
+            metadata = {
+                "provider": getattr(self.adapter, "name", type(self.adapter).__name__)
+            }
+        metadata["role"] = "read_only_investigator"
+        return metadata
 
 
 class AgentRunner:
@@ -64,6 +106,7 @@ class AgentRunner:
         model_retry_max_delay_seconds: float = MODEL_RETRY_MAX_DELAY_SECONDS,
         model_retry_sleep: Callable[[float], None] | None = None,
         notes_mode: NotesMode = "auto",
+        readonly_investigator_model: ModelAdapter | None = None,
     ) -> None:
         self.model = model
         self.cwd = cwd.resolve()
@@ -87,6 +130,7 @@ class AgentRunner:
         )
         self._model_retry_sleep = model_retry_sleep or time.sleep
         self.notes_mode = notes_mode
+        self.readonly_investigator_model = readonly_investigator_model
         self._stable_prefix_hash: str | None = None
 
     def run(
@@ -276,7 +320,7 @@ class AgentRunner:
                 decision=decision.to_record(),
             )
 
-            result = self._execute_or_deny(action, decision)
+            result = self._execute_or_deny(action, decision, trace)
             result = store_large_observation(result, run_path=trace.run_path).result
             self._attach_tool_metadata(state, action, result)
             observation = ToolObservation(
@@ -445,6 +489,7 @@ class AgentRunner:
         self,
         action: ModelAction,
         decision: PolicyDecision,
+        trace: TraceWriter,
     ) -> ToolResult:
         tool_name = action.tool_name or "<missing>"
         if not decision.allowed:
@@ -455,10 +500,117 @@ class AgentRunner:
                 output="",
                 error=f"policy denied tool call: {decision.reason}",
             )
+        if tool_name == DELEGATE_TOOL_NAME:
+            return self._execute_readonly_delegation(action, trace)
         return self.tools.execute(
             call_id=action.call_id,
             tool_name=tool_name,
             tool_args=action.tool_args,
+        )
+
+    def _execute_readonly_delegation(
+        self,
+        action: ModelAction,
+        trace: TraceWriter,
+    ) -> ToolResult:
+        task = str(action.tool_args.get("task") or "").strip()
+        scope = action.tool_args.get("scope")
+        scope_text = str(scope).strip() if isinstance(scope, str) and scope.strip() else None
+        max_iterations = _bounded_delegate_iterations(action.tool_args.get("max_iterations"))
+        allowed_tools = _delegate_allowed_tools(action.tool_args.get("allowed_tools"))
+        subtask = _format_delegate_task(task, scope_text, allowed_tools)
+        child_run_id = f"{trace.run_id}_delegation_{action.call_id}"
+        trace.emit(
+            "delegation_started",
+            call_id=action.call_id,
+            delegation_id=child_run_id,
+            task=task,
+            scope=scope_text,
+            allowed_tools=sorted(allowed_tools),
+            max_iterations=max_iterations,
+        )
+        child_tools = ToolRegistry(self.cwd)
+        investigator_model = ReadOnlyInvestigatorModel(
+            self.readonly_investigator_model or self.model
+        )
+        child_runner = AgentRunner(
+            model=investigator_model,
+            cwd=self.cwd,
+            trace_root=self.trace_root,
+            max_iterations=max_iterations,
+            context_mode=self.context_mode,
+            policy=ToolPolicy(allowed_tools=allowed_tools, schemas=child_tools.get_schemas()),
+            tools=child_tools,
+            repo_map_max_tokens=self.repo_map_max_tokens,
+            repo_map_mode=self.repo_map_mode,
+            model_retry_max_retries=self.model_retry_max_retries,
+            model_retry_base_delay_seconds=self.model_retry_base_delay_seconds,
+            model_retry_max_delay_seconds=self.model_retry_max_delay_seconds,
+            model_retry_sleep=self._model_retry_sleep,
+            notes_mode=self.notes_mode,
+            readonly_investigator_model=self.readonly_investigator_model,
+        )
+        try:
+            child_result = child_runner.run(
+                subtask,
+                session_context={
+                    "parent_run_id": trace.run_id,
+                    "delegation_call_id": action.call_id,
+                    "delegation_type": "read_only_investigator",
+                    "allowed_tools": sorted(allowed_tools),
+                    "scope": scope_text,
+                },
+                run_id=child_run_id,
+            )
+        except Exception as exc:
+            trace.emit(
+                "delegation_failed",
+                call_id=action.call_id,
+                delegation_id=child_run_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return ToolResult(
+                call_id=action.call_id,
+                tool_name=DELEGATE_TOOL_NAME,
+                ok=False,
+                output="",
+                error=f"read-only delegation failed: {type(exc).__name__}: {exc}",
+                metadata={
+                    "delegation_id": child_run_id,
+                    "allowed_tools": sorted(allowed_tools),
+                    "max_iterations": max_iterations,
+                },
+            )
+
+        payload = {
+            "summary": child_result.final_answer,
+            "evidence": _delegation_evidence(child_result.trace_path, self.cwd),
+            "open_questions": [],
+            "confidence": "medium" if child_result.status == "success" else "low",
+        }
+        trace.emit(
+            "delegation_completed",
+            call_id=action.call_id,
+            delegation_id=child_run_id,
+            status=child_result.status,
+            trace_path=str(child_result.trace_path),
+            evidence_count=len(payload["evidence"]),
+        )
+        return ToolResult(
+            call_id=action.call_id,
+            tool_name=DELEGATE_TOOL_NAME,
+            ok=child_result.status == "success",
+            output=json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            error=None if child_result.status == "success" else child_result.final_answer,
+            metadata={
+                "delegation_id": child_run_id,
+                "delegation_trace_path": str(child_result.trace_path),
+                "delegation_status": child_result.status,
+                "allowed_tools": sorted(allowed_tools),
+                "max_iterations": max_iterations,
+                "evidence_count": len(payload["evidence"]),
+            },
         )
 
     def _next_model_action(self, state: AgentState, context: object) -> ModelAction:
@@ -758,6 +910,139 @@ def _session_turn_count(session_context: dict[str, Any] | None) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _bounded_delegate_iterations(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(1, min(value, MAX_READONLY_DELEGATE_ITERATIONS))
+    return DEFAULT_READONLY_DELEGATE_MAX_ITERATIONS
+
+
+def _delegate_allowed_tools(value: Any) -> set[str]:
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        requested = set(value)
+        if requested and requested.issubset(READONLY_DELEGATE_TOOLS):
+            return requested
+    return set(READONLY_DELEGATE_TOOLS)
+
+
+def _format_delegate_task(task: str, scope: str | None, allowed_tools: set[str]) -> str:
+    parts = [
+        "Read-only investigator subtask.",
+        f"Task: {task}",
+        "Return a concise evidence summary with file paths, line numbers, and open questions.",
+        "Do not request edits, tests, shell commands, network access, or note creation.",
+        "Allowed tools: " + ", ".join(sorted(allowed_tools)),
+    ]
+    if scope:
+        parts.insert(2, f"Scope: {scope}")
+    return "\n".join(parts)
+
+
+def _delegation_evidence(trace_path: Path, cwd: Path) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    try:
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError):
+        return evidence
+    for record in records:
+        if record.get("type") != "tool_result":
+            continue
+        result = record.get("result")
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        metadata = result.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        tool_name = result.get("tool_name")
+        if tool_name == "read_file":
+            path = metadata.get("path")
+            if isinstance(path, str):
+                offset = metadata.get("offset", 0)
+                limit = metadata.get("limit", 0)
+                evidence.append(
+                    {
+                        "tool_name": "read_file",
+                        "path": path,
+                        "lines": _line_range(offset, limit),
+                        "claim": _clip_text(str(result.get("output") or ""), 240),
+                    }
+                )
+        elif tool_name == "search_code":
+            path = metadata.get("path")
+            evidence.append(
+                {
+                    "tool_name": "search_code",
+                    "path": path if isinstance(path, str) else ".",
+                    "query": metadata.get("query"),
+                    "claim": _clip_text(str(result.get("output") or ""), 240),
+                }
+            )
+        elif tool_name == "repo_map":
+            evidence.append(
+                {
+                    "tool_name": "repo_map",
+                    "path": str(cwd),
+                    "query": metadata.get("query"),
+                    "claim": _clip_text(str(result.get("output") or ""), 240),
+                }
+            )
+        elif tool_name == "search_notes":
+            evidence.append(
+                {
+                    "tool_name": "search_notes",
+                    "path": ".harnesscoder/notes.json",
+                    "query": metadata.get("query"),
+                    "claim": _clip_text(str(result.get("output") or ""), 240),
+                }
+            )
+        if len(evidence) >= 12:
+            break
+    return evidence
+
+
+def _line_range(offset: Any, limit: Any) -> str:
+    try:
+        start = int(offset) + 1
+        count = max(1, int(limit))
+    except (TypeError, ValueError):
+        return ""
+    return f"{start}-{start + count - 1}"
+
+
+def _clip_text(text: str, limit: int) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
+
+
+def _replace_context_system(context: object, system_instructions: str) -> object:
+    try:
+        return type(context)(
+            mode=context.mode,
+            system_instructions=system_instructions,
+            task_contract=context.task_contract,
+            available_tools=context.available_tools,
+            relevant_notes=context.relevant_notes,
+            recent_observations=context.recent_observations,
+            packed_context=context.packed_context,
+            working_memory=context.working_memory,
+            repo_map=context.repo_map,
+            session_context=context.session_context,
+            context_injected=context.context_injected,
+            estimated_tokens=context.estimated_tokens,
+            prompt_fingerprint=context.prompt_fingerprint,
+            prompt_sections=context.prompt_sections,
+            context_budget=context.context_budget,
+            context_quality=context.context_quality,
+        )
+    except AttributeError:
+        return context
 
 
 def _is_retryable_model_adapter_error(exc: ModelAdapterError) -> bool:

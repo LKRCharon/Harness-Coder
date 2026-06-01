@@ -230,6 +230,7 @@ class ToolRegistry:
             "run_command": self.run_command,
             "create_note": self.create_note,
             "search_notes": self.search_notes,
+            "delegate_readonly": self.delegate_readonly,
         }
         self._schemas: dict[str, ToolSchema] = {}
         for name, fn in self._tools.items():
@@ -787,6 +788,35 @@ class ToolRegistry:
                 "note_type": note_type,
                 "note_count": len(records),
                 "note_ids": [record["note_id"] for record in records],
+            },
+        )
+
+    @harness_tool(
+        description="Delegate bounded read-only investigation to a subagent.",
+        task=("string", "Investigation task for the read-only subagent.", True),
+        scope=("string | null", "Optional workspace path, topic, or file scope.", False, None),
+        max_iterations=("int", "Maximum subagent tool iterations.", False, 3),
+        allowed_tools=("string[] | null", "Optional subset of read-only tools.", False, None),
+    )
+    def delegate_readonly(
+        self,
+        call_id: str,
+        task: str,
+        scope: str | None = None,
+        max_iterations: int = 3,
+        allowed_tools: list[str] | None = None,
+    ) -> ToolResult:
+        return ToolResult(
+            call_id=call_id,
+            tool_name="delegate_readonly",
+            ok=False,
+            output="",
+            error="delegate_readonly must be executed by AgentRunner",
+            metadata={
+                "task": task,
+                "scope": scope,
+                "max_iterations": max_iterations,
+                "allowed_tools": allowed_tools,
             },
         )
 
